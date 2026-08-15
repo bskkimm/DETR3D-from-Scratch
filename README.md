@@ -105,15 +105,19 @@ python eval.py --help
 
 ## Educational Walkthrough
 
-`notebooks/detr3d_e2e_walkthrough.ipynb` explains the current package rather
-than maintaining a second implementation. It covers the data contract,
-LiDAR-to-image geometry, official preprocessing, model path, iterative reference
-refinement, encoded boxes, matching/losses, training recipe, diagnostics, and
-official evaluation.
+`notebooks/detr3d_e2e_walkthrough.ipynb` is a standalone, literate definition of
+the full DETR3D architecture. It implements GridMask, the image backbone and
+FPN, multiview feature sampling, cross-attention, the iterative transformer and
+head, and the box codec in notebook cells instead of importing the production
+model. Production imports are limited to surrounding dataset, matching/loss,
+diagnostic, and official-evaluation demonstrations.
 
-Set `NUSCENES_DATAROOT` and optionally `DETR3D_CHECKPOINT` before running its
-dataset and checkpoint sections. The notebook is intentionally committed
-without execution outputs so generated data does not become repository history.
+The default mode runs deterministic reduced synthetic probes, including a real
+optimization step, without nuScenes data or a checkpoint. Real-data,
+strict-checkpoint-parity, and official-evaluation paths are separately guarded
+opt-ins. See `COMMAND_GUIDE.md` for the exact smoke command and path settings.
+The committed notebook has no stored outputs or execution counts; execute it to
+a temporary output file rather than overwriting it.
 
 ## Verification
 
