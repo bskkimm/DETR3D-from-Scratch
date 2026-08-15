@@ -116,8 +116,9 @@ The default mode runs deterministic reduced synthetic probes, including a real
 optimization step, without nuScenes data or a checkpoint. Real-data,
 strict-checkpoint-parity, and official-evaluation paths are separately guarded
 opt-ins. See `COMMAND_GUIDE.md` for the exact smoke command and path settings.
-The committed notebook has no stored outputs or execution counts; execute it to
-a temporary output file rather than overwriting it.
+The documented pytest commands execute its cells without writing a temporary
+notebook or changing the committed file, which has no stored outputs or
+execution counts.
 
 ## Verification
 

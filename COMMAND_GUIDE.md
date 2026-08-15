@@ -687,27 +687,39 @@ conda run -n torch_env env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
 ```
 
 A successful run verifies the `TASK5_SMOKE_COMPLETE` sentinel. When using
-Jupyter interactively, run a copy rather than the tracked file: every committed
-code cell must retain `execution_count: null` and `outputs: []`.
+the documented pytest path, no temporary notebook is written and the tracked
+file is unchanged. Every committed code cell retains `execution_count: null`
+and `outputs: []`.
 
 ### Optional Data And Evaluation Modes
 
-For the real-data demonstration, set these values in the configuration cell of
-a temporary notebook copy:
+The following command non-interactively sets `RUN_REAL_DATA=True`, the dataroot,
+version, and sample index, then executes the actual notebook real-data cell:
 
-```python
-RUN_REAL_DATA = True
-NUSCENES_DATAROOT = "/path/to/nuscenes"
+```bash
+conda run -n torch_env env \
+  PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+  RUN_NOTEBOOK_REAL_DATA=1 \
+  NUSCENES_DATAROOT=/path/to/nuscenes \
+  NUSCENES_VERSION=v1.0-trainval \
+  NUSCENES_SAMPLE_INDEX=0 \
+  python -m pytest \
+  tests/test_architecture_notebook.py::test_notebook_real_data_path_on_configured_validation_sample \
+  -q
 ```
 
-`RUN_REAL_DATA` loads nuScenes validation sample 0 and forwards it through the
-notebook-defined architecture. `FCOS3D_CHECKPOINT_PATH` is available when
-demonstrating FCOS3D initialization separately.
+The fixture fails directly when explicitly enabled with a missing/invalid
+dataroot, version, or sample index. A successful run verifies
+`TASK5_REAL_DATA_COMPLETE` after forwarding the selected validation sample
+through the notebook-defined architecture. `FCOS3D_CHECKPOINT_PATH` remains
+available for separate FCOS3D initialization demonstrations.
 
 Strict notebook-to-production checkpoint parity is guarded by an opt-in test
 because the production model factory is deliberately supplied outside the
-notebook. It uses CUDA, float32 evaluation, validation sample 0, strict state
-loading, and compares all four output tensors at `atol=rtol=1e-5`:
+notebook. The fixture non-interactively sets `RUN_CHECKPOINT=True`, injects the
+factory and configured paths, and executes the actual notebook checkpoint cell.
+It uses CUDA, float32 evaluation, validation sample 0, strict state loading, and
+compares all four output tensors at `atol=rtol=1e-5`:
 
 ```bash
 conda run -n torch_env env \

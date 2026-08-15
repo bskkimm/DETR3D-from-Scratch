@@ -1080,6 +1080,54 @@ def test_smoke_training_rejects_a_missing_decoder_layer_loss():
 
 
 @pytest.mark.skipif(
+    os.environ.get("RUN_NOTEBOOK_REAL_DATA") != "1",
+    reason="set RUN_NOTEBOOK_REAL_DATA=1 for the nuScenes notebook fixture",
+)
+def test_notebook_real_data_path_on_configured_validation_sample(capsys):
+    dataroot_value = os.environ.get("NUSCENES_DATAROOT")
+    version = os.environ.get("NUSCENES_VERSION")
+    sample_index_value = os.environ.get("NUSCENES_SAMPLE_INDEX")
+    assert dataroot_value, "RUN_NOTEBOOK_REAL_DATA=1 requires NUSCENES_DATAROOT"
+    assert version, "RUN_NOTEBOOK_REAL_DATA=1 requires NUSCENES_VERSION"
+    assert sample_index_value is not None, (
+        "RUN_NOTEBOOK_REAL_DATA=1 requires NUSCENES_SAMPLE_INDEX"
+    )
+    dataroot = Path(dataroot_value)
+    assert dataroot.is_dir(), (
+        f"RUN_NOTEBOOK_REAL_DATA=1 requires a nuScenes dataroot: {dataroot}"
+    )
+    sample_index = int(sample_index_value)
+    assert sample_index >= 0, "NUSCENES_SAMPLE_INDEX must be non-negative"
+
+    namespace = {}
+    real_data_cell_executed = False
+    for index, cell in enumerate(_code_cells(load_notebook())):
+        source = _parseable_source(cell)
+        if "real_dataset = None" not in source:
+            exec(compile(source, f"notebook-cell-{index}", "exec"), namespace)
+            continue
+        namespace.update(
+            RUN_REAL_DATA=True,
+            NUSCENES_DATAROOT=dataroot,
+            NUSCENES_VERSION=version,
+            NUSCENES_SAMPLE_INDEX=sample_index,
+        )
+        exec(compile(source, f"notebook-cell-{index}", "exec"), namespace)
+        real_data_cell_executed = True
+        break
+
+    assert real_data_cell_executed, "notebook real-data cell was not found"
+    assert namespace["RUN_REAL_DATA"] is True
+    assert namespace["real_dataset"].version == version
+    assert len(namespace["real_dataset"]) == sample_index + 1
+    assert (
+        namespace["real_sample"]["img_metas"]["sample_token"]
+        == namespace["real_dataset"].samples[sample_index]["token"]
+    )
+    assert "TASK5_REAL_DATA_COMPLETE" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(
     os.environ.get("RUN_NOTEBOOK_CHECKPOINT_PARITY") != "1",
     reason="set RUN_NOTEBOOK_CHECKPOINT_PARITY=1 for the CUDA checkpoint fixture",
 )
