@@ -3,6 +3,18 @@ import json
 import tokenize
 from io import StringIO
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from detr3d.models.transformer.cross_attention import (
+    Detr3DCrossAttention as ProductionDetr3DCrossAttention,
+)
+from detr3d.models.transformer.feature_sampling import (
+    feature_sampling as production_feature_sampling,
+)
 
 
 NOTEBOOK = Path(__file__).parents[1] / "notebooks" / "detr3d_e2e_walkthrough.ipynb"
@@ -44,6 +56,17 @@ IMAGE_FEATURE_DEFINITIONS = {
     "ModulatedDeformConv2dPack",
     "MultiViewImageBackbone",
     "ImageFPN",
+}
+MULTIVIEW_ATTENTION_MARKERS = {
+    "ARCH-REFERENCES",
+    "ARCH-FEATURE-SAMPLING",
+    "ARCH-CROSS-ATTENTION",
+}
+MULTIVIEW_ATTENTION_DEFINITIONS = {
+    "inverse_sigmoid",
+    "denormalize_reference_points",
+    "feature_sampling",
+    "Detr3DCrossAttention",
 }
 APPROVED_PRODUCTION_IMPORTS = {
     ("detr3d.models.losses", "Detr3DLoss"),
@@ -93,6 +116,27 @@ TASK2_DIMENSION_ANNOTATIONS = (
     ("FPN camera restore", "pyramid[out_name] = feat.reshape(", "P6 [B*6,256,15,25] -> [B,6,256,15,25]"),
     ("smoke backbone", "smoke_features = smoke_backbone(smoke_images)", "C5 [B,6,2048,29,50]"),
     ("smoke FPN", "smoke_pyramid = smoke_fpn(smoke_features)", "P6 [B,6,256,15,25]"),
+)
+
+TASK3_DIMENSION_ANNOTATIONS = (
+    ("homogeneous coordinate append", "ref_points_homo = torch.cat(", "[B,900,3] -> [B,900,4]"),
+    ("projection matrix batch stack", "return torch.stack(matrices, dim=0)", "[B,6,4,4]"),
+    ("single image shape camera expansion", "shape_tensor = shape_tensor.unsqueeze(0).repeat(", "[2] -> [6,2]"),
+    ("image shape batch stack", "return torch.stack(shapes, dim=0)", "[B,6,2]"),
+    ("projection camera expansion", "proj = proj.unsqueeze(1).repeat(", "[B,4,4] -> [B,6,4,4]"),
+    ("homogeneous point camera axis", "points = ref_points_homo[:, None, :, :, None]", "[B,900,4] -> [B,1,900,4,1]"),
+    ("projection multiply squeeze", "proj_points = torch.matmul(", "[B,6,900,4,1] -> [B,6,900,4]"),
+    ("sampling grid stack", "grid = torch.stack(", "[B,6,900] + [B,6,900] -> [B,6,900,2]"),
+    ("feature camera flatten", "feat = level_feat.reshape(", "[B,6,256,H_l,W_l] -> [B*6,256,H_l,W_l]"),
+    ("grid camera flatten", "level_grid = grid.reshape(", "[B,6,900,2] -> [B*6,900,1,2]"),
+    ("bilinear sampling", "sampled = F.grid_sample(", "[B*6,256,H_l,W_l] -> [B*6,256,900,1]"),
+    ("sample axis restore", "sampled = sampled.reshape(", "[B*6,256,900,1] -> [B,256,900,6,1]"),
+    ("mask axis order", "level_mask = valid.permute(", "[B,6,900] -> [B,1,900,6,1]"),
+    ("feature level stack", "sampled_feats = torch.stack(", "[B,256,900,6,1] -> [B,256,900,6,1,4]"),
+    ("mask level stack", "mask = torch.stack(", "[B,1,900,6,1] -> [B,1,900,6,1,4]"),
+    ("attention camera-level view", "attention_weights = attention_weights.view(", "[B,900,24] -> [B,900,6,1,4]"),
+    ("attention axis alignment", "attention_weights = attention_weights.permute(", "[B,900,6,1,4] -> [B,1,900,6,1,4]"),
+    ("fused decoder layout", "fused = fused.permute(", "[B,256,900] -> [B,900,256]"),
 )
 
 # Static matching cannot reliably infer dimensions from arbitrary module names.
@@ -188,6 +232,33 @@ def _local_definitions(notebook):
             if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
         )
     return defined
+
+
+def _execute_multiview_attention_cells():
+    namespace = {
+        "torch": torch,
+        "nn": nn,
+        "F": F,
+        "Dict": Dict,
+        "List": List,
+        "Optional": Optional,
+        "Tuple": Tuple,
+    }
+    wanted = MULTIVIEW_ATTENTION_DEFINITIONS | {
+        "_stack_projection_matrices",
+        "_stack_image_shapes",
+    }
+    for cell in _code_cells(load_notebook()):
+        source = _parseable_source(cell)
+        tree = ast.parse(source)
+        names = {
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        if names & wanted:
+            exec(compile(source, NOTEBOOK.name, "exec"), namespace)
+    return namespace
 
 
 def _forbidden_imports(tree):
@@ -300,6 +371,96 @@ def test_image_feature_architecture_definitions_are_local():
     assert not missing, f"missing local image-feature definitions: {sorted(missing)}"
 
 
+def test_multiview_attention_contract_is_local_and_complete():
+    notebook = load_notebook()
+    missing_markers = MULTIVIEW_ATTENTION_MARKERS - _declared_markers(
+        markdown_text(notebook)
+    )
+    missing_definitions = MULTIVIEW_ATTENTION_DEFINITIONS - _local_definitions(notebook)
+    assert not missing_markers, f"missing Task 3 markers: {sorted(missing_markers)}"
+    assert not missing_definitions, (
+        f"missing Task 3 definitions: {sorted(missing_definitions)}"
+    )
+
+
+def test_notebook_feature_sampling_has_hand_checked_projection_geometry():
+    notebook = _execute_multiview_attention_cells()
+    feature_sampling = notebook["feature_sampling"]
+    feature_map = torch.tensor(
+        [[[[[0.0, 1.0, 2.0, 3.0],
+             [10.0, 11.0, 12.0, 13.0],
+             [20.0, 21.0, 22.0, 23.0],
+             [30.0, 31.0, 32.0, 33.0]]]]]
+    )
+    references = torch.tensor(
+        [[[0.2, 0.2, 0.75], [0.5, 0.2, 0.75], [0.1, 0.1, 0.25]]]
+    )
+    metadata = [{"lidar2img": torch.eye(4)[None], "image_shape": (4, 4)}]
+
+    metric, sampled, mask = feature_sampling(
+        [feature_map], references, (0.0, 0.0, -2.0, 10.0, 10.0, 2.0), metadata
+    )
+
+    torch.testing.assert_close(
+        metric, torch.tensor([[[2.0, 2.0, 1.0], [5.0, 2.0, 1.0], [1.0, 1.0, -1.0]]])
+    )
+    assert sampled.shape == (1, 1, 3, 1, 1, 1)
+    torch.testing.assert_close(sampled[0, 0, :, 0, 0, 0], torch.tensor([16.5, 0.0, 0.0]))
+    assert mask.shape == (1, 1, 3, 1, 1, 1)
+    torch.testing.assert_close(mask[0, 0, :, 0, 0, 0], torch.tensor([1.0, 0.0, 0.0]))
+
+
+def test_notebook_sampling_and_cross_attention_match_pinned_production():
+    notebook = _execute_multiview_attention_cells()
+    notebook_feature_sampling = notebook["feature_sampling"]
+    NotebookDetr3DCrossAttention = notebook["Detr3DCrossAttention"]
+    generator = torch.Generator().manual_seed(31)
+    features = [
+        torch.randn(1, 2, 4, 4, 5, generator=generator),
+        torch.randn(1, 2, 4, 2, 3, generator=generator),
+    ]
+    references = torch.tensor(
+        [[[0.45, 0.55, 0.75], [0.6, 0.4, 0.8], [0.2, 0.3, 0.25]]]
+    )
+    projections = torch.stack(
+        [torch.eye(4), torch.tensor([[1.0, 0.0, 0.0, 0.25], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]])]
+    )
+    metadata = [{"lidar2img": projections, "image_shape": [(4, 5), (4, 5)]}]
+    pc_range = (-2.0, -2.0, -1.0, 2.0, 2.0, 3.0)
+
+    expected_sampling = production_feature_sampling(
+        features, references, pc_range, metadata
+    )
+    actual_sampling = notebook_feature_sampling(
+        features, references, pc_range, metadata
+    )
+    for actual, expected in zip(actual_sampling, expected_sampling):
+        torch.testing.assert_close(actual, expected)
+
+    torch.manual_seed(41)
+    production_attention = ProductionDetr3DCrossAttention(
+        embed_dims=4, num_cams=2, num_levels=2, pc_range=pc_range, dropout=0.0
+    ).eval()
+    torch.manual_seed(41)
+    notebook_attention = NotebookDetr3DCrossAttention(
+        embed_dims=4, num_cams=2, num_levels=2, pc_range=pc_range, dropout=0.0
+    ).eval()
+    for name, expected in production_attention.state_dict().items():
+        torch.testing.assert_close(notebook_attention.state_dict()[name], expected)
+    notebook_attention.load_state_dict(production_attention.state_dict(), strict=True)
+    query = torch.randn(1, 3, 4, generator=generator)
+    query_pos = torch.randn(1, 3, 4, generator=generator)
+
+    with torch.inference_mode():
+        expected_output = production_attention(
+            query, features, references, metadata, query_pos
+        )
+        actual_output = notebook_attention(
+            query, features, references, metadata, query_pos
+        )
+    torch.testing.assert_close(actual_output, expected_output)
+
+
 def test_code_cells_are_committed_without_outputs():
     for index, cell in enumerate(_code_cells(load_notebook())):
         assert cell.get("outputs") == [], f"code cell {index} has stored outputs"
@@ -357,3 +518,19 @@ def test_task2_dimension_changes_have_symbolic_and_faithful_shape_comments():
         if missing:
             failures.append(f"{category}: missing {missing}: {matches[0]}")
     assert not failures, "incomplete Task 2 shape annotations:\n" + "\n".join(failures)
+
+
+def test_task3_dimension_changes_have_symbolic_and_faithful_shape_comments():
+    lines = code_text(load_notebook()).splitlines()
+    failures = []
+    for category, operation, faithful_shape in TASK3_DIMENSION_ANNOTATIONS:
+        matches = [line for line in lines if operation in line]
+        if len(matches) != 1:
+            failures.append(f"{category}: expected one `{operation}` line, found {len(matches)}")
+            continue
+        comment = matches[0].partition("#")[2]
+        required = ("symbolic", "faithful", "->", faithful_shape)
+        missing = [fragment for fragment in required if fragment not in comment]
+        if missing:
+            failures.append(f"{category}: missing {missing}: {matches[0]}")
+    assert not failures, "incomplete Task 3 shape annotations:\n" + "\n".join(failures)
