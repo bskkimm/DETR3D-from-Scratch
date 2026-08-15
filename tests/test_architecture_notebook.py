@@ -218,13 +218,48 @@ TASK4_DIMENSION_ANNOTATIONS = (
     ("head refinement reference z slice", "refine_ref_z_logits = ref_logits[..., 2:3]", "[B,900,3] -> [B,900,1]"),
     ("head class stack", "stacked_cls_scores = torch.stack(cls_scores)", "6 x [B,900,10] -> [6,B,900,10]"),
     ("head box stack", "stacked_bbox_preds = torch.stack(bbox_preds)", "6 x [B,900,10] -> [6,B,900,10]"),
+    ("head hidden-state iteration", "for layer_idx, layer_hs in enumerate(hs):", "[6,B,900,256] -> [B,900,256]"),
     ("model image camera flatten", "flat_images = images.reshape(", "[B,6,3,928,1600] -> [B*6,3,928,1600]"),
     ("model image camera restore", "images = augmented_flat.reshape_as(images)", "[B*6,3,928,1600] -> [B,6,3,928,1600]"),
     ("model class stack", "model_cls_scores = torch.stack(cls_scores)", "6 x [B,900,10] -> [6,B,900,10]"),
     ("model box stack", "model_bbox_preds = torch.stack(bbox_preds)", "6 x [B,900,10] -> [6,B,900,10]"),
     ("model reference stack", "model_inter_references = torch.stack(inter_references)", "6 x [B,900,3] -> [6,B,900,3]"),
+    ("empty box encoding", "return boxes.new_zeros((0, 10))", "[0,9] -> [0,10]"),
     ("box encoding concatenate", "encoded_boxes = torch.cat(", "[S,9] -> [S,10]"),
     ("box decoding concatenate", "decoded_boxes = torch.cat(", "[S,10] -> [S,9]"),
+)
+
+TASK4_AST_SHAPE_CALLS = {
+    "cat",
+    "expand",
+    "new_zeros",
+    "reshape",
+    "reshape_as",
+    "stack",
+    "unsqueeze",
+}
+TASK4_NON_TENSOR_INDEX_CONTAINERS = {"mlvl_feats"}
+TASK4_SEMANTIC_DIMENSION_ANNOTATIONS = (
+    ("decoder self-attention", "self_attended, _ = self.self_attn(", 1, "[B,900,256] -> [B,900,256]"),
+    ("decoder cross-attention", "cross = self.cross_attn(", 1, "[B,900,256] -> [B,900,256]"),
+    ("decoder FFN", "ff = self.ffn(query)", 1, "[B,900,256] -> [B,900,512] -> [B,900,256]"),
+    ("standalone reference prediction", "reference_points = reference_point_predictor(", 1, "[B,900,256] -> [B,900,3]"),
+    ("decoder layer calls", "hidden = layer(", 2, "[B,900,256] -> [B,900,256]"),
+    ("MLP projection", "return self.net(x)", 1, "[B,900,256] -> [B,900,10]"),
+    ("initial reference projection", "return self.reference_points(query_pos)", 1, "[B,900,256] -> [B,900,3]"),
+    ("standalone reference projection", "return self.reference_points(layer_q)", 1, "[B,900,256] -> [B,900,3]"),
+    ("regression branch", "return self.reg_branches[layer_idx](layer_hs)", 1, "[B,900,256] -> [B,900,10]"),
+    ("classification branch", "return self.cls_branches[layer_idx](layer_hs)", 1, "[B,900,256] -> [B,900,10]"),
+    ("head regression call", "reg_output = self.regress_boxes(", 1, "[B,900,256] -> [B,900,10]"),
+    ("head classification call", "cls_score = self.classify(", 1, "[B,900,256] -> [B,900,10]"),
+    ("head box encoding call", "bbox_pred = self._encode_box_predictions(", 1, "[B,900,10] -> [B,900,10]"),
+    ("backbone feature extraction", "features = self.backbone(images)", 1, "[B,6,3,928,1600] ->"),
+    ("FPN feature projection", "pyramid = self.neck(features)", 1, "-> P3-P6 [B,6,256"),
+    ("model initial references", "reference_points = self.head.init_reference_points(", 1, "[B,900,256] -> [B,900,3]"),
+    ("model regression call", "reg_output = self.head.regress_boxes(", 1, "[B,900,256] -> [B,900,10]"),
+    ("model classification call", "cls_score = self.head.classify(", 1, "[B,900,256] -> [B,900,10]"),
+    ("model box encoding call", "bbox_pred = self.head._encode_box_predictions(", 1, "[B,900,10] -> [B,900,10]"),
+    ("model reference refinement", "reference_points = self.head.refine_reference_points_from_reg_output(", 1, "[B,900,3] -> [B,900,3]"),
 )
 
 # Static matching cannot reliably infer dimensions from arbitrary module names.
@@ -375,6 +410,71 @@ def _execute_task4_definition_cells():
         if names & wanted:
             exec(compile(source, NOTEBOOK.name, "exec"), namespace)
     return namespace
+
+
+def _task4_implementation_sources():
+    sources = []
+    for cell_index, cell in enumerate(_code_cells(load_notebook())):
+        source = _parseable_source(cell)
+        tree = ast.parse(source)
+        names = {
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        if names & TASK4_DEFINITIONS:
+            sources.append((cell_index, source, tree))
+    return sources
+
+
+def _task4_ast_transition_sites(tree):
+    sites = {}
+    categories = set()
+    annotation_node_ids = set()
+    for node in ast.walk(tree):
+        annotations = []
+        if isinstance(node, ast.arg) and node.annotation is not None:
+            annotations.append(node.annotation)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.returns is not None:
+                annotations.append(node.returns)
+        elif isinstance(node, ast.AnnAssign):
+            annotations.append(node.annotation)
+        for annotation in annotations:
+            annotation_node_ids.update(id(child) for child in ast.walk(annotation))
+
+    def record(line_number, category):
+        sites[line_number] = sites.get(line_number, 0) + 1
+        categories.add(category)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute):
+                operation = node.func.attr
+            elif isinstance(node.func, ast.Name):
+                operation = node.func.id
+            else:
+                operation = None
+            if operation in TASK4_AST_SHAPE_CALLS:
+                record(node.lineno, f"call:{operation}")
+        elif isinstance(node, ast.Subscript):
+            if (
+                id(node) not in annotation_node_ids
+                and isinstance(node.value, ast.Name)
+                and node.value.id not in TASK4_NON_TENSOR_INDEX_CONTAINERS
+            ):
+                record(node.lineno, "tensor-index")
+        elif isinstance(node, ast.For):
+            iterator = node.iter
+            if (
+                isinstance(iterator, ast.Call)
+                and isinstance(iterator.func, ast.Name)
+                and iterator.func.id == "enumerate"
+                and iterator.args
+                and isinstance(iterator.args[0], ast.Name)
+            ):
+                record(node.lineno, "tensor-iteration")
+    return sites, categories
 
 
 def _forbidden_imports(tree):
@@ -929,6 +1029,70 @@ def test_task3_dimension_changes_have_symbolic_and_faithful_shape_comments():
         if missing:
             failures.append(f"{category}: missing {missing}: {matches[0]}")
     assert not failures, "incomplete Task 3 shape annotations:\n" + "\n".join(failures)
+
+
+def test_every_task4_ast_transition_has_symbolic_and_faithful_shape_comment():
+    failures = []
+    found_categories = set()
+    for cell_index, source, tree in _task4_implementation_sources():
+        comments = _comments_by_line(source)
+        sites, categories = _task4_ast_transition_sites(tree)
+        found_categories.update(categories)
+        lines = source.splitlines()
+        for line_number, transition_count in sorted(sites.items()):
+            comment = comments.get(line_number, "")
+            missing = [
+                fragment
+                for fragment in ("symbolic", "faithful", "->", "[", "]")
+                if fragment not in comment
+            ]
+            if missing:
+                failures.append(
+                    f"cell {cell_index}, line {line_number}: missing {missing}: "
+                    f"{lines[line_number - 1]}"
+                )
+            if transition_count > 1:
+                failures.append(
+                    f"cell {cell_index}, line {line_number}: "
+                    f"{transition_count} chained AST transitions: "
+                    f"{lines[line_number - 1]}"
+                )
+
+    expected_categories = {
+        *(f"call:{operation}" for operation in TASK4_AST_SHAPE_CALLS),
+        "tensor-index",
+        "tensor-iteration",
+    }
+    assert found_categories == expected_categories
+    assert not failures, "incomplete AST-discovered Task 4 annotations:\n" + "\n".join(
+        failures
+    )
+
+
+def test_task4_semantic_transitions_have_explicit_shape_comments():
+    lines = [
+        line
+        for _, source, _ in _task4_implementation_sources()
+        for line in source.splitlines()
+    ]
+    failures = []
+    for category, operation, expected_count, faithful_shape in (
+        TASK4_SEMANTIC_DIMENSION_ANNOTATIONS
+    ):
+        matches = [line for line in lines if operation in line]
+        if len(matches) != expected_count:
+            failures.append(
+                f"{category}: expected {expected_count} `{operation}` lines, "
+                f"found {len(matches)}"
+            )
+            continue
+        for line in matches:
+            comment = line.partition("#")[2]
+            required = ("symbolic", "faithful", "->", faithful_shape)
+            missing = [fragment for fragment in required if fragment not in comment]
+            if missing:
+                failures.append(f"{category}: missing {missing}: {line}")
+    assert not failures, "incomplete semantic Task 4 annotations:\n" + "\n".join(failures)
 
 
 def test_task4_dimension_changes_have_symbolic_and_faithful_shape_comments():
