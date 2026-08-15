@@ -1,9 +1,10 @@
 import ast
 import json
+import math
 import tokenize
 from io import StringIO
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -14,6 +15,21 @@ from detr3d.models.transformer.cross_attention import (
 )
 from detr3d.models.transformer.feature_sampling import (
     feature_sampling as production_feature_sampling,
+)
+from detr3d.models.detr3d import Detr3DModel as ProductionDetr3DModel
+from detr3d.models.heads.detr3d_head import (
+    Detr3DHead as ProductionDetr3DHead,
+    MLP as ProductionMLP,
+)
+from detr3d.models.losses.loss_utils import (
+    decode_bbox_predictions as production_decode_bbox_predictions,
+    encode_bbox_targets as production_encode_bbox_targets,
+)
+from detr3d.models.transformer.decoder import (
+    Detr3DTransformer as ProductionDetr3DTransformer,
+)
+from detr3d.models.transformer.decoder_layer import (
+    Detr3DDecoderLayer as ProductionDetr3DDecoderLayer,
 )
 
 
@@ -69,6 +85,23 @@ MULTIVIEW_ATTENTION_DEFINITIONS = {
     "_stack_image_shapes",
     "feature_sampling",
     "Detr3DCrossAttention",
+}
+TASK4_MARKERS = {
+    "ARCH-DECODER-LAYER",
+    "ARCH-TRANSFORMER",
+    "ARCH-HEAD",
+    "ARCH-MODEL",
+    "ARCH-BOX-CODEC",
+}
+TASK4_DEFINITIONS = {
+    "Detr3DDecoderLayer",
+    "Detr3DTransformer",
+    "MLP",
+    "Detr3DHead",
+    "Detr3DModel",
+    "encode_bbox_targets",
+    "decode_bbox_predictions",
+    "build_notebook_model",
 }
 APPROVED_PRODUCTION_IMPORTS = {
     ("detr3d.models.losses", "Detr3DLoss"),
@@ -165,6 +198,33 @@ TASK3_DIMENSION_ANNOTATIONS = (
     ("attention singleton reduction", "fused_cameras = fused_levels.sum(dim=-1)", "[B,256,900,6,1] -> [B,256,900,6]"),
     ("attention camera reduction", "fused = fused_cameras.sum(dim=-1)", "[B,256,900,6] -> [B,256,900]"),
     ("fused decoder layout", "fused = fused.permute(", "[B,256,900] -> [B,900,256]"),
+)
+
+TASK4_DIMENSION_ANNOTATIONS = (
+    ("transformer query singleton", "query = self.query_embed.weight.unsqueeze(0)", "[900,256] -> [1,900,256]"),
+    ("transformer query batch expansion", "query = query.expand(", "[1,900,256] -> [B,900,256]"),
+    ("transformer position singleton", "query_pos = self.query_pos.weight.unsqueeze(0)", "[900,256] -> [1,900,256]"),
+    ("transformer position batch expansion", "query_pos = query_pos.expand(", "[1,900,256] -> [B,900,256]"),
+    ("transformer state stack", "stacked_states = torch.stack(intermediate_states)", "6 x [B,900,256] -> [6,B,900,256]"),
+    ("transformer reference stack", "stacked_refs = torch.stack(intermediate_refs)", "6 x [B,900,3] -> [6,B,900,3]"),
+    ("head encoded regression xy slice", "encoded_reg_xy = reg_output[..., 0:2]", "[B,900,10] -> [B,900,2]"),
+    ("head encoded reference xy slice", "encoded_ref_xy_logits = ref_logits[..., 0:2]", "[B,900,3] -> [B,900,2]"),
+    ("head encoded regression z slice", "encoded_reg_z = reg_output[..., 4:5]", "[B,900,10] -> [B,900,1]"),
+    ("head encoded reference z slice", "encoded_ref_z_logits = ref_logits[..., 2:3]", "[B,900,3] -> [B,900,1]"),
+    ("head normalized center append", "normalized_centers = torch.cat(", "[B,900,2] + [B,900,1] -> [B,900,3]"),
+    ("head refinement regression xy slice", "refine_reg_xy = reg_output[..., 0:2]", "[B,900,10] -> [B,900,2]"),
+    ("head refinement reference xy slice", "refine_ref_xy_logits = ref_logits[..., 0:2]", "[B,900,3] -> [B,900,2]"),
+    ("head refinement regression z slice", "refine_reg_z = reg_output[..., 4:5]", "[B,900,10] -> [B,900,1]"),
+    ("head refinement reference z slice", "refine_ref_z_logits = ref_logits[..., 2:3]", "[B,900,3] -> [B,900,1]"),
+    ("head class stack", "stacked_cls_scores = torch.stack(cls_scores)", "6 x [B,900,10] -> [6,B,900,10]"),
+    ("head box stack", "stacked_bbox_preds = torch.stack(bbox_preds)", "6 x [B,900,10] -> [6,B,900,10]"),
+    ("model image camera flatten", "flat_images = images.reshape(", "[B,6,3,928,1600] -> [B*6,3,928,1600]"),
+    ("model image camera restore", "images = augmented_flat.reshape_as(images)", "[B*6,3,928,1600] -> [B,6,3,928,1600]"),
+    ("model class stack", "model_cls_scores = torch.stack(cls_scores)", "6 x [B,900,10] -> [6,B,900,10]"),
+    ("model box stack", "model_bbox_preds = torch.stack(bbox_preds)", "6 x [B,900,10] -> [6,B,900,10]"),
+    ("model reference stack", "model_inter_references = torch.stack(inter_references)", "6 x [B,900,3] -> [6,B,900,3]"),
+    ("box encoding concatenate", "encoded_boxes = torch.cat(", "[S,9] -> [S,10]"),
+    ("box decoding concatenate", "decoded_boxes = torch.cat(", "[S,10] -> [S,9]"),
 )
 
 # Static matching cannot reliably infer dimensions from arbitrary module names.
@@ -273,6 +333,37 @@ def _execute_multiview_attention_cells():
         "Tuple": Tuple,
     }
     wanted = MULTIVIEW_ATTENTION_DEFINITIONS
+    for cell in _code_cells(load_notebook()):
+        source = _parseable_source(cell)
+        tree = ast.parse(source)
+        names = {
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        if names & wanted:
+            exec(compile(source, NOTEBOOK.name, "exec"), namespace)
+    return namespace
+
+
+def _execute_task4_definition_cells():
+    namespace = {
+        "math": math,
+        "torch": torch,
+        "nn": nn,
+        "F": F,
+        "Callable": Callable,
+        "Dict": Dict,
+        "Iterable": Iterable,
+        "List": List,
+        "Optional": Optional,
+        "Tuple": Tuple,
+    }
+    wanted = MULTIVIEW_ATTENTION_DEFINITIONS | TASK4_DEFINITIONS | {
+        "GridMask",
+        "MultiViewImageBackbone",
+        "ImageFPN",
+    }
     for cell in _code_cells(load_notebook()):
         source = _parseable_source(cell)
         tree = ast.parse(source)
@@ -486,6 +577,278 @@ def test_notebook_sampling_and_cross_attention_match_pinned_production():
     torch.testing.assert_close(actual_output, expected_output)
 
 
+def _tiny_decoder_inputs(generator):
+    features = [torch.randn(1, 1, 4, 3, 3, generator=generator)]
+    query = torch.randn(1, 3, 4, generator=generator)
+    query_pos = torch.randn(1, 3, 4, generator=generator)
+    references = torch.tensor(
+        [[[0.45, 0.55, 0.5], [0.6, 0.4, 0.75], [0.2, 0.3, 0.25]]]
+    )
+    metadata = [{"lidar2img": torch.eye(4)[None], "image_shape": (3, 3)}]
+    return features, query, query_pos, references, metadata
+
+
+def _assert_matching_state_dicts(actual, expected):
+    assert actual.state_dict().keys() == expected.state_dict().keys()
+    for name, tensor in expected.state_dict().items():
+        torch.testing.assert_close(actual.state_dict()[name], tensor)
+
+
+def test_task4_architecture_contract_is_local_and_complete():
+    notebook = load_notebook()
+    missing_markers = TASK4_MARKERS - _declared_markers(markdown_text(notebook))
+    missing_definitions = TASK4_DEFINITIONS - _local_definitions(notebook)
+    assert not missing_markers, f"missing Task 4 markers: {sorted(missing_markers)}"
+    assert not missing_definitions, (
+        f"missing Task 4 definitions: {sorted(missing_definitions)}"
+    )
+
+
+def test_notebook_decoder_layer_matches_pinned_production():
+    notebook = _execute_task4_definition_cells()
+    NotebookDecoderLayer = notebook["Detr3DDecoderLayer"]
+    kwargs = dict(
+        embed_dims=4,
+        num_heads=1,
+        num_cams=1,
+        num_levels=1,
+        ffn_channels=8,
+        dropout=0.0,
+        pc_range=(-1.0, -1.0, -1.0, 1.0, 1.0, 1.0),
+    )
+    torch.manual_seed(101)
+    production = ProductionDetr3DDecoderLayer(**kwargs).eval()
+    torch.manual_seed(101)
+    actual = NotebookDecoderLayer(**kwargs).eval()
+    _assert_matching_state_dicts(actual, production)
+    actual.load_state_dict(production.state_dict(), strict=True)
+    inputs = _tiny_decoder_inputs(torch.Generator().manual_seed(102))
+
+    with torch.inference_mode():
+        expected_output = production(
+            query=inputs[1], mlvl_feats=inputs[0], query_pos=inputs[2],
+            reference_points=inputs[3], img_metas=inputs[4]
+        )
+        actual_output = actual(
+            query=inputs[1], mlvl_feats=inputs[0], query_pos=inputs[2],
+            reference_points=inputs[3], img_metas=inputs[4]
+        )
+    torch.testing.assert_close(actual_output, expected_output)
+
+
+def test_notebook_transformer_standalone_forward_matches_pinned_production():
+    notebook = _execute_task4_definition_cells()
+    NotebookTransformer = notebook["Detr3DTransformer"]
+    kwargs = dict(
+        embed_dims=4,
+        num_queries=3,
+        num_layers=2,
+        num_heads=1,
+        num_cams=1,
+        num_levels=1,
+        pc_range=(-1.0, -1.0, -1.0, 1.0, 1.0, 1.0),
+    )
+    torch.manual_seed(111)
+    production = ProductionDetr3DTransformer(**kwargs).eval()
+    torch.manual_seed(111)
+    actual = NotebookTransformer(**kwargs).eval()
+    _assert_matching_state_dicts(actual, production)
+    actual.load_state_dict(production.state_dict(), strict=True)
+    features, _, _, _, metadata = _tiny_decoder_inputs(
+        torch.Generator().manual_seed(112)
+    )
+    pyramid = {"p3": features[0]}
+    predictor = lambda layer_idx, hidden: torch.sigmoid(hidden[..., :3] + layer_idx)
+
+    with torch.inference_mode():
+        expected = production(pyramid, metadata, predictor)
+        output = actual(pyramid, metadata, predictor)
+    for actual_tensor, expected_tensor in zip(output, expected):
+        torch.testing.assert_close(actual_tensor, expected_tensor)
+
+
+def test_notebook_mlp_and_head_match_pinned_production():
+    notebook = _execute_task4_definition_cells()
+    NotebookMLP = notebook["MLP"]
+    NotebookHead = notebook["Detr3DHead"]
+    torch.manual_seed(121)
+    production_mlp = ProductionMLP(4, 6, 2, 3, use_layernorm=True).eval()
+    torch.manual_seed(121)
+    actual_mlp = NotebookMLP(4, 6, 2, 3, use_layernorm=True).eval()
+    _assert_matching_state_dicts(actual_mlp, production_mlp)
+
+    kwargs = dict(
+        embed_dims=4,
+        num_classes=3,
+        box_dim=10,
+        num_decoder_layers=2,
+        pc_range=(-2.0, -3.0, -1.0, 2.0, 3.0, 5.0),
+    )
+    torch.manual_seed(122)
+    production = ProductionDetr3DHead(**kwargs).eval()
+    torch.manual_seed(122)
+    actual = NotebookHead(**kwargs).eval()
+    _assert_matching_state_dicts(actual, production)
+    actual.load_state_dict(production.state_dict(), strict=True)
+    generator = torch.Generator().manual_seed(123)
+    hidden = torch.randn(2, 1, 3, 4, generator=generator)
+    references = torch.rand(2, 1, 3, 3, generator=generator).clamp(0.1, 0.9)
+
+    with torch.inference_mode():
+        expected = production(hidden, references)
+        output = actual(hidden, references)
+        expected_refined = production.refine_reference_points_from_reg_output(
+            production.regress_boxes(0, hidden[0]), references[0]
+        )
+        actual_refined = actual.refine_reference_points_from_reg_output(
+            actual.regress_boxes(0, hidden[0]), references[0]
+        )
+    for actual_tensor, expected_tensor in zip(output, expected):
+        torch.testing.assert_close(actual_tensor, expected_tensor)
+    torch.testing.assert_close(actual_refined, expected_refined)
+
+
+class _TinyBackbone(nn.Module):
+    def forward(self, images):
+        return {"c3": images}
+
+
+class _TinyNeck(nn.Module):
+    def forward(self, features):
+        return {"p3": features["c3"]}
+
+
+def test_notebook_top_level_model_matches_production_and_detaches_refinements():
+    notebook = _execute_task4_definition_cells()
+    NotebookTransformer = notebook["Detr3DTransformer"]
+    NotebookHead = notebook["Detr3DHead"]
+    NotebookModel = notebook["Detr3DModel"]
+    transformer_kwargs = dict(
+        embed_dims=4,
+        num_queries=3,
+        num_layers=6,
+        num_heads=1,
+        num_cams=1,
+        num_levels=1,
+        pc_range=(-1.0, -1.0, 1.0, 1.0, 1.0, 3.0),
+    )
+    head_kwargs = dict(
+        embed_dims=4,
+        num_classes=3,
+        num_decoder_layers=6,
+        pc_range=transformer_kwargs["pc_range"],
+    )
+    torch.manual_seed(131)
+    production_transformer = ProductionDetr3DTransformer(**transformer_kwargs).eval()
+    production_head = ProductionDetr3DHead(**head_kwargs).eval()
+    torch.manual_seed(131)
+    actual_transformer = NotebookTransformer(**transformer_kwargs).eval()
+    actual_head = NotebookHead(**head_kwargs).eval()
+    actual_transformer.load_state_dict(production_transformer.state_dict(), strict=True)
+    actual_head.load_state_dict(production_head.state_dict(), strict=True)
+    production = ProductionDetr3DModel(
+        _TinyBackbone(), _TinyNeck(), production_transformer, production_head
+    ).eval()
+    actual = NotebookModel(
+        _TinyBackbone(), _TinyNeck(), actual_transformer, actual_head
+    ).eval()
+    seen_requires_grad = []
+    hooks = [
+        layer.register_forward_pre_hook(
+            lambda module, args, kwargs: seen_requires_grad.append(
+                kwargs["reference_points"].requires_grad
+            ),
+            with_kwargs=True,
+        )
+        for layer in actual.transformer.layers
+    ]
+    images = torch.randn(1, 1, 4, 3, 3, generator=torch.Generator().manual_seed(132))
+    metadata = [{"lidar2img": torch.eye(4)[None], "image_shape": (3, 3)}]
+
+    expected = production(images, metadata)
+    output = actual(images, metadata)
+    for hook in hooks:
+        hook.remove()
+    assert output.keys() == expected.keys()
+    for name in output:
+        torch.testing.assert_close(output[name], expected[name])
+    assert output["cls_scores"].shape == (6, 1, 3, 3)
+    assert output["bbox_preds"].shape == (6, 1, 3, 10)
+    assert output["init_reference"].shape == (1, 3, 3)
+    assert output["inter_references"].shape == (6, 1, 3, 3)
+    assert seen_requires_grad == [True, False, False, False, False, False]
+    assert torch.all((output["inter_references"] >= 0) & (output["inter_references"] <= 1))
+
+
+def test_notebook_builder_matches_production_c6_wiring():
+    notebook = _execute_task4_definition_cells()
+    calls = []
+
+    def record(name):
+        def factory(*args, **kwargs):
+            calls.append((name, args, kwargs))
+            return name
+        return factory
+
+    for name in (
+        "Detr3DModel",
+        "MultiViewImageBackbone",
+        "ImageFPN",
+        "Detr3DTransformer",
+        "Detr3DHead",
+        "GridMask",
+    ):
+        notebook[name] = record(name)
+
+    built = notebook["build_notebook_model"](
+        num_queries=900,
+        backbone_name="resnet101",
+        pretrained_backbone=False,
+        official_image_backbone=True,
+        use_grid_mask=True,
+    )
+    assert built == "Detr3DModel"
+    assert calls == [
+        ("MultiViewImageBackbone", (), {"variant": "resnet101", "pretrained": False, "official_style": True}),
+        ("ImageFPN", (), {"relu_before_extra_convs": True}),
+        ("Detr3DTransformer", (), {"num_queries": 900, "num_levels": 4}),
+        ("Detr3DHead", (), {"num_decoder_layers": 6}),
+        ("GridMask", (), {}),
+        ("Detr3DModel", (), {
+            "backbone": "MultiViewImageBackbone",
+            "neck": "ImageFPN",
+            "transformer": "Detr3DTransformer",
+            "head": "Detr3DHead",
+            "image_augmentation": "GridMask",
+        }),
+    ]
+
+
+def test_notebook_box_codec_matches_production_and_round_trips_wrapped_yaw():
+    notebook = _execute_task4_definition_cells()
+    encode = notebook["encode_bbox_targets"]
+    decode = notebook["decode_bbox_predictions"]
+    boxes = torch.tensor(
+        [
+            [1.0, -2.0, 0.5, 2.0, 4.0, 1.5, math.pi + 0.25, 0.1, -0.2],
+            [-3.0, 1.0, 2.5, 0.5, 1.25, 3.0, -math.pi - 0.5, -1.0, 2.0],
+        ]
+    )
+    expected_encoded = production_encode_bbox_targets(boxes)
+    encoded = encode(boxes)
+    torch.testing.assert_close(encoded, expected_encoded)
+    assert torch.isfinite(encoded).all()
+    decoded = decode(encoded)
+    torch.testing.assert_close(decoded, production_decode_bbox_predictions(encoded))
+    torch.testing.assert_close(decoded[..., :6], boxes[..., :6])
+    torch.testing.assert_close(decoded[..., 7:], boxes[..., 7:])
+    yaw_error = torch.atan2(
+        torch.sin(decoded[..., 6] - boxes[..., 6]),
+        torch.cos(decoded[..., 6] - boxes[..., 6]),
+    )
+    torch.testing.assert_close(yaw_error, torch.zeros_like(yaw_error), atol=1e-6, rtol=0)
+
+
 def test_code_cells_are_committed_without_outputs():
     for index, cell in enumerate(_code_cells(load_notebook())):
         assert cell.get("outputs") == [], f"code cell {index} has stored outputs"
@@ -500,6 +863,13 @@ def test_all_code_cells_parse_as_python():
             ast.parse(_parseable_source(cell))
         except SyntaxError as error:
             raise AssertionError(f"code cell {index} does not parse: {error}") from error
+
+
+def test_all_code_cells_execute_sequentially():
+    namespace = {}
+    for index, cell in enumerate(_code_cells(load_notebook())):
+        source = _parseable_source(cell)
+        exec(compile(source, f"notebook-cell-{index}", "exec"), namespace)
 
 
 def test_notebook_does_not_import_project_architecture():
@@ -559,3 +929,19 @@ def test_task3_dimension_changes_have_symbolic_and_faithful_shape_comments():
         if missing:
             failures.append(f"{category}: missing {missing}: {matches[0]}")
     assert not failures, "incomplete Task 3 shape annotations:\n" + "\n".join(failures)
+
+
+def test_task4_dimension_changes_have_symbolic_and_faithful_shape_comments():
+    lines = code_text(load_notebook()).splitlines()
+    failures = []
+    for category, operation, faithful_shape in TASK4_DIMENSION_ANNOTATIONS:
+        matches = [line for line in lines if operation in line]
+        if len(matches) != 1:
+            failures.append(f"{category}: expected one `{operation}` line, found {len(matches)}")
+            continue
+        comment = matches[0].partition("#")[2]
+        required = ("symbolic", "faithful", "->", faithful_shape)
+        missing = [fragment for fragment in required if fragment not in comment]
+        if missing:
+            failures.append(f"{category}: missing {missing}: {matches[0]}")
+    assert not failures, "incomplete Task 4 shape annotations:\n" + "\n".join(failures)
