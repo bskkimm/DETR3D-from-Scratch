@@ -121,6 +121,7 @@ APPROVED_PRODUCTION_IMPORTS = {
     ("detr3d.engine.evaluator", "decode_nuscenes_predictions"),
     ("detr3d.engine.evaluator", "export_nuscenes_results"),
     ("detr3d.engine.evaluator", "run_nuscenes_evaluation"),
+    ("detr3d.models.checkpoint", "load_fcos3d_initialization"),
     ("detr3d.models.losses", "Detr3DLoss"),
     ("detr3d.models.losses.matcher", "HungarianMatcher3D"),
 }
@@ -217,6 +218,33 @@ TASK3_DIMENSION_ANNOTATIONS = (
     ("fused decoder layout", "fused = fused.permute(", "[B,256,900] -> [B,900,256]"),
 )
 
+TASK3_SEMANTIC_TRANSITION_ANNOTATIONS = (
+    (
+        "perspective depth division",
+        "xy = xy / depth.clamp(min=1e-5)",
+        "[B,6,900,2] / [B,6,900,1] -> [B,6,900,2]",
+        "broadcast coordinate axis",
+    ),
+    (
+        "pixel x width normalization",
+        "norm_x = pixel_x / width.clamp(min=1.0)",
+        "[B,6,900] / [B,6,1] -> [B,6,900]",
+        "broadcast query axis",
+    ),
+    (
+        "pixel y height normalization",
+        "norm_y = pixel_y / height.clamp(min=1.0)",
+        "[B,6,900] / [B,6,1] -> [B,6,900]",
+        "broadcast query axis",
+    ),
+    (
+        "feature-sampling result unpack",
+        "_, sampled_feats, mask = feature_sampling(",
+        "[B,900,3], [B,256,900,6,1,4], [B,1,900,6,1,4]",
+        "unpack metric, sampled, mask",
+    ),
+)
+
 TASK4_DIMENSION_ANNOTATIONS = (
     ("transformer query singleton", "query = self.query_embed.weight.unsqueeze(0)", "[900,256] -> [1,900,256]"),
     ("transformer query batch expansion", "query = query.expand(", "[1,900,256] -> [B,900,256]"),
@@ -277,6 +305,8 @@ TASK4_SEMANTIC_DIMENSION_ANNOTATIONS = (
     ("model classification call", "cls_score = self.head.classify(", 1, "[B,900,256] -> [B,900,10]"),
     ("model box encoding call", "bbox_pred = self.head._encode_box_predictions(", 1, "[B,900,10] -> [B,900,10]"),
     ("model reference refinement", "reference_points = self.head.refine_reference_points_from_reg_output(", 1, "[B,900,3] -> [B,900,3]"),
+    ("head forward_single result", "cls_score, bbox_pred = self.forward_single(", 1, "[B,900,256] + [B,900,3] -> [B,900,10] + [B,900,10]"),
+    ("model decoder-state construction", "query, query_pos = self.transformer.init_decoder_state(", 1, "[900,256] + [900,256] -> [B,900,256] + [B,900,256]"),
 )
 
 # Static matching cannot reliably infer dimensions from arbitrary module names.
@@ -640,6 +670,63 @@ def test_image_feature_architecture_definitions_are_local():
     assert not missing, f"missing local image-feature definitions: {sorted(missing)}"
 
 
+@pytest.mark.parametrize(
+    ("class_name", "heading", "required_text"),
+    (
+        (
+            "MultiViewImageBackbone",
+            "## MultiViewImageBackbone",
+            ("[B,N,3,H,W]", "C3", "C4", "C5", "```text"),
+        ),
+        (
+            "Detr3DHead",
+            "## Detr3DHead",
+            ("forward_single", "[B,Q,C]", "[B,Q,K]", "[B,Q,10]", "```text"),
+        ),
+    ),
+)
+def test_major_component_implementation_has_immediately_preceding_explanation(
+    class_name, heading, required_text
+):
+    cells = load_notebook()["cells"]
+    implementation_index = None
+    for index, cell in enumerate(cells):
+        if cell["cell_type"] != "code":
+            continue
+        tree = ast.parse(_parseable_source(cell))
+        if any(
+            isinstance(node, ast.ClassDef) and node.name == class_name
+            for node in tree.body
+        ):
+            implementation_index = index
+            break
+
+    assert implementation_index is not None, f"missing {class_name} implementation"
+    explanation = cells[implementation_index - 1]
+    assert explanation["cell_type"] == "markdown"
+    text = "".join(explanation["source"])
+    assert heading in text
+    for fragment in required_text:
+        assert fragment in text
+
+
+def test_notebook_fcos3d_initialization_uses_configured_path_and_production_helper():
+    source = code_text(load_notebook())
+    assert (
+        "from detr3d.models.checkpoint import load_fcos3d_initialization" in source
+    )
+    assert "fcos3d_checkpoint_path = Path(FCOS3D_CHECKPOINT_PATH)" in source
+    assert (
+        "load_fcos3d_initialization(fcos3d_model, fcos3d_checkpoint_path)" in source
+    )
+
+
+def test_opt_in_checkpoint_test_has_no_developer_specific_path_fallbacks():
+    test_source = Path(__file__).read_text()
+    developer_root = "/" + "home/beomseokkim2/"
+    assert developer_root not in test_source
+
+
 def test_multiview_attention_contract_is_local_and_complete():
     notebook = load_notebook()
     missing_markers = MULTIVIEW_ATTENTION_MARKERS - _declared_markers(
@@ -728,6 +815,50 @@ def test_notebook_sampling_and_cross_attention_match_pinned_production():
             query, features, references, metadata, query_pos
         )
     torch.testing.assert_close(actual_output, expected_output)
+
+
+def test_notebook_official_backbone_and_fpn_match_pinned_production_in_normal_ci():
+    notebook = _execute_task4_definition_cells()
+    NotebookBackbone = notebook["MultiViewImageBackbone"]
+    NotebookFPN = notebook["ImageFPN"]
+
+    backbone_kwargs = dict(
+        variant="resnet101", pretrained=False, official_style=True
+    )
+    torch.manual_seed(81)
+    production_backbone = ProductionMultiViewImageBackbone(
+        **backbone_kwargs
+    ).eval()
+    torch.manual_seed(81)
+    notebook_backbone = NotebookBackbone(**backbone_kwargs).eval()
+    _assert_matching_state_dicts(notebook_backbone, production_backbone)
+    notebook_backbone.load_state_dict(production_backbone.state_dict(), strict=True)
+
+    images = torch.randn(1, 1, 3, 32, 48, generator=torch.Generator().manual_seed(82))
+    with torch.inference_mode():
+        expected_features = production_backbone(images)
+        actual_features = notebook_backbone(images)
+        repeated_features = notebook_backbone(images)
+    assert actual_features.keys() == expected_features.keys()
+    for name in actual_features:
+        torch.testing.assert_close(actual_features[name], expected_features[name])
+        torch.testing.assert_close(repeated_features[name], actual_features[name])
+
+    fpn_kwargs = dict(relu_before_extra_convs=True)
+    torch.manual_seed(83)
+    production_fpn = ProductionImageFPN(**fpn_kwargs).eval()
+    torch.manual_seed(83)
+    notebook_fpn = NotebookFPN(**fpn_kwargs).eval()
+    _assert_matching_state_dicts(notebook_fpn, production_fpn)
+    notebook_fpn.load_state_dict(production_fpn.state_dict(), strict=True)
+    with torch.inference_mode():
+        expected_pyramid = production_fpn(expected_features)
+        actual_pyramid = notebook_fpn(actual_features)
+        repeated_pyramid = notebook_fpn(actual_features)
+    assert actual_pyramid.keys() == expected_pyramid.keys()
+    for name in actual_pyramid:
+        torch.testing.assert_close(actual_pyramid[name], expected_pyramid[name])
+        torch.testing.assert_close(repeated_pyramid[name], actual_pyramid[name])
 
 
 def _tiny_decoder_inputs(generator):
@@ -1135,15 +1266,16 @@ def test_notebook_strict_checkpoint_parity_on_validation_sample_zero(capsys):
     assert torch.cuda.is_available(), (
         "RUN_NOTEBOOK_CHECKPOINT_PARITY=1 requires CUDA"
     )
-    dataroot = Path(
-        os.environ.get("NUSCENES_DATAROOT", "/home/beomseokkim2/dataset/nuscenes")
+    dataroot_value = os.environ.get("NUSCENES_DATAROOT")
+    checkpoint_value = os.environ.get("DETR3D_CHECKPOINT_PATH")
+    assert dataroot_value, (
+        "RUN_NOTEBOOK_CHECKPOINT_PARITY=1 requires NUSCENES_DATAROOT"
     )
-    checkpoint_path = Path(
-        os.environ.get(
-            "DETR3D_CHECKPOINT_PATH",
-            "/home/beomseokkim2/kim/detr3d/outputs/c6_full_v1/final_checkpoint.pt",
-        )
+    assert checkpoint_value, (
+        "RUN_NOTEBOOK_CHECKPOINT_PARITY=1 requires DETR3D_CHECKPOINT_PATH"
     )
+    dataroot = Path(dataroot_value)
+    checkpoint_path = Path(checkpoint_value)
     assert dataroot.is_dir(), (
         f"RUN_NOTEBOOK_CHECKPOINT_PARITY=1 requires a nuScenes dataroot: {dataroot}"
     )
@@ -1272,6 +1404,37 @@ def test_task3_dimension_changes_have_symbolic_and_faithful_shape_comments():
         if missing:
             failures.append(f"{category}: missing {missing}: {matches[0]}")
     assert not failures, "incomplete Task 3 shape annotations:\n" + "\n".join(failures)
+
+
+def test_task3_semantic_broadcasts_and_result_unpack_have_explicit_comments():
+    lines = code_text(load_notebook()).splitlines()
+    failures = []
+    found_categories = set()
+    for category, operation, faithful_shape, semantic in (
+        TASK3_SEMANTIC_TRANSITION_ANNOTATIONS
+    ):
+        matches = [line for line in lines if operation in line]
+        if len(matches) != 1:
+            failures.append(
+                f"{category}: expected one `{operation}` line, found {len(matches)}"
+            )
+            continue
+        found_categories.add(category)
+        comment = matches[0].partition("#")[2]
+        required = ("symbolic", "faithful", "->", faithful_shape, semantic)
+        missing = [fragment for fragment in required if fragment not in comment]
+        if missing:
+            failures.append(f"{category}: missing {missing}: {matches[0]}")
+
+    assert found_categories == {
+        "perspective depth division",
+        "pixel x width normalization",
+        "pixel y height normalization",
+        "feature-sampling result unpack",
+    }
+    assert not failures, "incomplete Task 3 semantic annotations:\n" + "\n".join(
+        failures
+    )
 
 
 def test_every_task4_ast_transition_has_symbolic_and_faithful_shape_comment():

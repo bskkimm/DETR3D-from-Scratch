@@ -711,8 +711,15 @@ conda run -n torch_env env \
 The fixture fails directly when explicitly enabled with a missing/invalid
 dataroot, version, or sample index. A successful run verifies
 `TASK5_REAL_DATA_COMPLETE` after forwarding the selected validation sample
-through the notebook-defined architecture. `FCOS3D_CHECKPOINT_PATH` remains
-available for separate FCOS3D initialization demonstrations.
+through the notebook-defined architecture.
+
+The notebook's guarded **Optional FCOS3D Image-Path Initialization** cell reads
+`FCOS3D_CHECKPOINT_PATH`. Set it to an existing FCOS3D checkpoint in a temporary
+interactive copy to build the notebook-defined official-style model and call
+the production `load_fcos3d_initialization` translation/validation helper. With
+the committed `None` default, the cell prints a skip message. An invalid
+configured path fails directly; the helper initializes the local architecture
+and does not replace it.
 
 Strict notebook-to-production checkpoint parity is guarded by an opt-in test
 because the production model factory is deliberately supplied outside the
