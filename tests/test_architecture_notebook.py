@@ -37,6 +37,10 @@ DEFINITIONS = {
     "decode_bbox_predictions",
     "build_notebook_model",
 }
+APPROVED_PRODUCTION_IMPORTS = {
+    ("detr3d.models.losses", "Detr3DLoss"),
+    ("detr3d.models.losses.matcher", "HungarianMatcher3D"),
+}
 
 DIMENSION_OPERATIONS = (
     ".view(",
@@ -138,42 +142,66 @@ def _declared_markers(markdown):
 
 def _forbidden_imports(tree):
     forbidden = []
-    allowed_model_prefix = "detr3d.models.losses"
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                is_allowed_loss = (
-                    alias.name == allowed_model_prefix
-                    or alias.name.startswith(f"{allowed_model_prefix}.")
-                )
-                if alias.name.startswith("detr3d.models") and not is_allowed_loss:
-                    forbidden.append(alias.name)
                 imported_name = alias.name.rsplit(".", 1)[-1]
-                if imported_name in DEFINITIONS or alias.asname in DEFINITIONS:
+                is_model_module = alias.name == "detr3d.models" or alias.name.startswith(
+                    "detr3d.models."
+                )
+                if (
+                    is_model_module
+                    or imported_name in DEFINITIONS
+                    or alias.asname in DEFINITIONS
+                ):
                     forbidden.append(alias.name)
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
-            is_allowed_loss = module == allowed_model_prefix or module.startswith(
-                f"{allowed_model_prefix}."
+            is_model_module = module == "detr3d.models" or module.startswith(
+                "detr3d.models."
             )
-            if module.startswith("detr3d.models") and not is_allowed_loss:
-                forbidden.append(module)
             for alias in node.names:
+                imported_symbol = f"{module}.{alias.name}"
+                is_approved = (module, alias.name) in APPROVED_PRODUCTION_IMPORTS
                 if (
-                    alias.name in DEFINITIONS
+                    alias.name == "*"
+                    or (is_model_module and not is_approved)
+                    or alias.name in DEFINITIONS
                     or alias.asname in DEFINITIONS
                     or alias.name == "build_model"
                 ):
-                    forbidden.append(f"{module}.{alias.name}")
+                    forbidden.append(imported_symbol)
     return forbidden
 
 
 def test_import_contract_allows_production_matching_and_loss_imports():
     tree = ast.parse(
-        "from detr3d.models.losses import Detr3DLoss\n"
-        "from detr3d.models.losses.matcher import HungarianMatcher3D\n"
+        "from detr3d.models.losses import Detr3DLoss as Loss\n"
+        "from detr3d.models.losses.matcher import HungarianMatcher3D as Matcher\n"
     )
     assert _forbidden_imports(tree) == []
+
+
+def test_import_contract_rejects_wildcard_imports_from_every_module():
+    tree = ast.parse(
+        "from unrelated_package import *\n"
+        "from detr3d.models.losses import *\n"
+    )
+    assert _forbidden_imports(tree) == [
+        "unrelated_package.*",
+        "detr3d.models.losses.*",
+    ]
+
+
+def test_import_contract_rejects_module_qualified_loss_imports():
+    tree = ast.parse(
+        "import detr3d.models.losses as losses\n"
+        "import detr3d.models.losses.loss_utils as loss_utils\n"
+    )
+    assert _forbidden_imports(tree) == [
+        "detr3d.models.losses",
+        "detr3d.models.losses.loss_utils",
+    ]
 
 
 def test_import_contract_rejects_architecture_modules_and_symbols():
@@ -185,7 +213,7 @@ def test_import_contract_rejects_architecture_modules_and_symbols():
     assert _forbidden_imports(tree) == [
         "anywhere.GridMask",
         "detr3d.models.losses.loss_utils.encode_bbox_targets",
-        "detr3d.models.backbone.image_backbone",
+        "detr3d.models.backbone.image_backbone.helper",
     ]
 
 
