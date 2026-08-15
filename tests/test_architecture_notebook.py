@@ -37,6 +37,13 @@ DEFINITIONS = {
     "decode_bbox_predictions",
     "build_notebook_model",
 }
+IMAGE_FEATURE_MARKERS = {"ARCH-GRID-MASK", "ARCH-BACKBONE", "ARCH-FPN"}
+IMAGE_FEATURE_DEFINITIONS = {
+    "GridMask",
+    "ModulatedDeformConv2dPack",
+    "MultiViewImageBackbone",
+    "ImageFPN",
+}
 APPROVED_PRODUCTION_IMPORTS = {
     ("detr3d.models.losses", "Detr3DLoss"),
     ("detr3d.models.losses.matcher", "HungarianMatcher3D"),
@@ -140,6 +147,18 @@ def _declared_markers(markdown):
     return {line.strip() for line in markdown.splitlines()} & MARKERS
 
 
+def _local_definitions(notebook):
+    defined = set()
+    for cell in _code_cells(notebook):
+        tree = ast.parse(_parseable_source(cell))
+        defined.update(
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        )
+    return defined
+
+
 def _forbidden_imports(tree):
     forbidden = []
     for node in ast.walk(tree):
@@ -233,18 +252,21 @@ def test_required_architecture_markers_are_present():
     assert not missing, f"missing architecture markers: {sorted(missing)}"
 
 
+def test_image_feature_architecture_markers_are_present():
+    markdown = markdown_text(load_notebook())
+    missing = IMAGE_FEATURE_MARKERS - _declared_markers(markdown)
+    assert not missing, f"missing image-feature markers: {sorted(missing)}"
+
+
 def test_required_architecture_definitions_are_local():
     notebook = load_notebook()
-    defined = set()
-    for cell in _code_cells(notebook):
-        tree = ast.parse(_parseable_source(cell))
-        defined.update(
-            node.name
-            for node in tree.body
-            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
-        )
-    missing = DEFINITIONS - defined
+    missing = DEFINITIONS - _local_definitions(notebook)
     assert not missing, f"missing local architecture definitions: {sorted(missing)}"
+
+
+def test_image_feature_architecture_definitions_are_local():
+    missing = IMAGE_FEATURE_DEFINITIONS - _local_definitions(load_notebook())
+    assert not missing, f"missing local image-feature definitions: {sorted(missing)}"
 
 
 def test_code_cells_are_committed_without_outputs():
