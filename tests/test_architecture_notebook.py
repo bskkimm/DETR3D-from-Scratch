@@ -19,7 +19,6 @@ from torchvision import models
 from torchvision.models import ResNet101_Weights
 from torchvision.ops import DeformConv2d
 
-from detr3d.data import NuScenesDetr3DDataset
 from detr3d.models.backbone import MultiViewImageBackbone as ProductionMultiViewImageBackbone
 from detr3d.models.transformer.cross_attention import (
     Detr3DCrossAttention as ProductionDetr3DCrossAttention,
@@ -1057,13 +1056,37 @@ for index, cell in enumerate(notebook['cells']):
     assert "TASK5_SMOKE_COMPLETE" in result.stdout
 
 
+def test_smoke_training_rejects_a_missing_decoder_layer_loss():
+    namespace = {}
+    for index, cell in enumerate(_code_cells(load_notebook())):
+        source = _parseable_source(cell)
+        if "smoke_criterion = Detr3DLoss" not in source:
+            exec(compile(source, f"notebook-cell-{index}", "exec"), namespace)
+            continue
+
+        real_loss = namespace["Detr3DLoss"]
+
+        class MissingLayerLoss(real_loss):
+            def loss_by_feat(self, *args, **kwargs):
+                losses = super().loss_by_feat(*args, **kwargs)
+                losses.pop("d4.loss_bbox")
+                return losses
+
+        namespace["Detr3DLoss"] = MissingLayerLoss
+        with pytest.raises(AssertionError, match="all six decoder layers"):
+            exec(compile(source, f"notebook-cell-{index}", "exec"), namespace)
+        return
+    raise AssertionError("smoke training cell was not found")
+
+
 @pytest.mark.skipif(
     os.environ.get("RUN_NOTEBOOK_CHECKPOINT_PARITY") != "1",
     reason="set RUN_NOTEBOOK_CHECKPOINT_PARITY=1 for the CUDA checkpoint fixture",
 )
-def test_notebook_strict_checkpoint_parity_on_validation_sample_zero():
-    if not torch.cuda.is_available():
-        pytest.skip("CUDA is required for exact checkpoint parity")
+def test_notebook_strict_checkpoint_parity_on_validation_sample_zero(capsys):
+    assert torch.cuda.is_available(), (
+        "RUN_NOTEBOOK_CHECKPOINT_PARITY=1 requires CUDA"
+    )
     dataroot = Path(
         os.environ.get("NUSCENES_DATAROOT", "/home/beomseokkim2/dataset/nuscenes")
     )
@@ -1073,67 +1096,75 @@ def test_notebook_strict_checkpoint_parity_on_validation_sample_zero():
             "/home/beomseokkim2/kim/detr3d/outputs/c6_full_v1/final_checkpoint.pt",
         )
     )
-    if not dataroot.is_dir():
-        pytest.skip(f"nuScenes dataroot is unavailable: {dataroot}")
-    if not checkpoint_path.is_file():
-        pytest.skip(f"checkpoint is unavailable: {checkpoint_path}")
-
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    args = checkpoint["args"]
-    expected_classes = tuple(NuScenesDetr3DDataset.CLASSES)
-    class_names = tuple(checkpoint.get("class_names", expected_classes))
-    assert len(class_names) == len(expected_classes)
-    assert set(class_names) == set(expected_classes)
-    state_dict = checkpoint["model_state_dict"]
-
-    notebook = _execute_task4_definition_cells()
-    notebook_model = notebook["build_notebook_model"](
-        num_queries=args["num_queries"],
-        backbone_name=args["backbone"],
-        pretrained_backbone=not args["disable_pretrained_backbone"],
-        official_image_backbone=args["official_image_backbone"],
-        use_grid_mask=args["grid_mask"],
+    assert dataroot.is_dir(), (
+        f"RUN_NOTEBOOK_CHECKPOINT_PARITY=1 requires a nuScenes dataroot: {dataroot}"
     )
-    production_model = ProductionDetr3DModel(
-        backbone=ProductionMultiViewImageBackbone(
-            variant=args["backbone"],
-            pretrained=not args["disable_pretrained_backbone"],
-            official_style=args["official_image_backbone"],
-        ),
-        neck=ProductionImageFPN(
-            relu_before_extra_convs=args["official_image_backbone"]
-        ),
-        transformer=ProductionDetr3DTransformer(num_queries=args["num_queries"]),
-        head=ProductionDetr3DHead(num_decoder_layers=6),
-        image_augmentation=ProductionGridMask() if args["grid_mask"] else None,
+    assert checkpoint_path.is_file(), (
+        "RUN_NOTEBOOK_CHECKPOINT_PARITY=1 requires a checkpoint file: "
+        f"{checkpoint_path}"
     )
-    notebook_model.load_state_dict(state_dict, strict=True)
-    production_model.load_state_dict(state_dict, strict=True)
-    device = torch.device("cuda")
-    notebook_model.to(device=device, dtype=torch.float32).eval()
-    production_model.to(device=device, dtype=torch.float32).eval()
 
-    dataset = NuScenesDetr3DDataset(
-        dataroot=dataroot,
-        version=args["version"],
-        image_size=(args["image_height"], args["image_width"]),
-        max_samples=1,
-        split="val",
-        official_image_preprocessing=args["official_image_preprocessing"],
-        official_gt_semantics=args["official_gt_semantics"],
+    def production_model_factory(config):
+        return ProductionDetr3DModel(
+            backbone=ProductionMultiViewImageBackbone(
+                variant=config["backbone"],
+                pretrained=not config["disable_pretrained_backbone"],
+                official_style=config["official_image_backbone"],
+            ),
+            neck=ProductionImageFPN(
+                relu_before_extra_convs=config["official_image_backbone"]
+            ),
+            transformer=ProductionDetr3DTransformer(
+                num_queries=config["num_queries"]
+            ),
+            head=ProductionDetr3DHead(num_decoder_layers=6),
+            image_augmentation=(
+                ProductionGridMask() if config["grid_mask"] else None
+            ),
+        )
+
+    output_keys = (
+        "cls_scores",
+        "bbox_preds",
+        "init_reference",
+        "inter_references",
     )
-    sample = dataset[0]
-    images = sample["images"].unsqueeze(0).to(device=device, dtype=torch.float32)
-    metadata = [{
-        "lidar2img": sample["img_metas"]["lidar2img"].to(device=device),
-        "image_shape": sample["img_metas"]["image_shape"].to(device=device),
-        "sample_token": sample["img_metas"]["sample_token"],
-    }]
-    with torch.inference_mode():
-        actual = notebook_model(images, metadata)
-        expected = production_model(images, metadata)
-    for key in ("cls_scores", "bbox_preds", "init_reference", "inter_references"):
-        torch.testing.assert_close(actual[key], expected[key], atol=1e-5, rtol=1e-5)
+    compared_keys = []
+    namespace = {}
+    parity_cell_executed = False
+    for index, cell in enumerate(_code_cells(load_notebook())):
+        source = _parseable_source(cell)
+        if "checkpoint_notebook_model = None" not in source:
+            exec(compile(source, f"notebook-cell-{index}", "exec"), namespace)
+            continue
+
+        namespace.update(
+            RUN_CHECKPOINT=True,
+            NUSCENES_DATAROOT=dataroot,
+            CHECKPOINT_PATH=checkpoint_path,
+            PRODUCTION_MODEL_FACTORY=production_model_factory,
+        )
+        real_assert_close = torch.testing.assert_close
+
+        def recording_assert_close(actual, expected, *args, **kwargs):
+            notebook_outputs = namespace.get("checkpoint_notebook_outputs", {})
+            for key in output_keys:
+                if actual is notebook_outputs.get(key):
+                    compared_keys.append(key)
+                    break
+            return real_assert_close(actual, expected, *args, **kwargs)
+
+        torch.testing.assert_close = recording_assert_close
+        try:
+            exec(compile(source, f"notebook-cell-{index}", "exec"), namespace)
+        finally:
+            torch.testing.assert_close = real_assert_close
+        parity_cell_executed = True
+        break
+
+    assert parity_cell_executed, "notebook checkpoint parity cell was not found"
+    assert "TASK5_CHECKPOINT_PARITY_COMPLETE" in capsys.readouterr().out
+    assert compared_keys == list(output_keys)
 
 
 def test_notebook_does_not_import_project_architecture():
