@@ -39,6 +39,7 @@ DEFINITIONS = {
 }
 IMAGE_FEATURE_MARKERS = {"ARCH-GRID-MASK", "ARCH-BACKBONE", "ARCH-FPN"}
 IMAGE_FEATURE_DEFINITIONS = {
+    "DeformConv2dPack",
     "GridMask",
     "ModulatedDeformConv2dPack",
     "MultiViewImageBackbone",
