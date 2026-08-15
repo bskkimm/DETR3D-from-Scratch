@@ -132,9 +132,76 @@ def _comments_by_line(source):
     }
 
 
+def _declared_markers(markdown):
+    return {line.strip() for line in markdown.splitlines()} & MARKERS
+
+
+def _forbidden_imports(tree):
+    forbidden = []
+    allowed_model_prefix = "detr3d.models.losses"
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                is_allowed_loss = (
+                    alias.name == allowed_model_prefix
+                    or alias.name.startswith(f"{allowed_model_prefix}.")
+                )
+                if alias.name.startswith("detr3d.models") and not is_allowed_loss:
+                    forbidden.append(alias.name)
+                imported_name = alias.name.rsplit(".", 1)[-1]
+                if imported_name in DEFINITIONS or alias.asname in DEFINITIONS:
+                    forbidden.append(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            is_allowed_loss = module == allowed_model_prefix or module.startswith(
+                f"{allowed_model_prefix}."
+            )
+            if module.startswith("detr3d.models") and not is_allowed_loss:
+                forbidden.append(module)
+            for alias in node.names:
+                if (
+                    alias.name in DEFINITIONS
+                    or alias.asname in DEFINITIONS
+                    or alias.name == "build_model"
+                ):
+                    forbidden.append(f"{module}.{alias.name}")
+    return forbidden
+
+
+def test_import_contract_allows_production_matching_and_loss_imports():
+    tree = ast.parse(
+        "from detr3d.models.losses import Detr3DLoss\n"
+        "from detr3d.models.losses.matcher import HungarianMatcher3D\n"
+    )
+    assert _forbidden_imports(tree) == []
+
+
+def test_import_contract_rejects_architecture_modules_and_symbols():
+    tree = ast.parse(
+        "from anywhere import GridMask\n"
+        "from detr3d.models.losses.loss_utils import encode_bbox_targets\n"
+        "from detr3d.models.backbone.image_backbone import helper\n"
+    )
+    assert _forbidden_imports(tree) == [
+        "anywhere.GridMask",
+        "detr3d.models.losses.loss_utils.encode_bbox_targets",
+        "detr3d.models.backbone.image_backbone",
+    ]
+
+
+def test_import_contract_rejects_build_model_from_every_module():
+    tree = ast.parse("from unrelated_package.factory import build_model\n")
+    assert _forbidden_imports(tree) == ["unrelated_package.factory.build_model"]
+
+
+def test_marker_declarations_must_be_exact_standalone_lines():
+    markdown = "ARCH-MODEL-OLD\nprefix ARCH-FPN\nARCH-HEAD\n"
+    assert _declared_markers(markdown) == {"ARCH-HEAD"}
+
+
 def test_required_architecture_markers_are_present():
     markdown = markdown_text(load_notebook())
-    missing = {marker for marker in MARKERS if marker not in markdown}
+    missing = MARKERS - _declared_markers(markdown)
     assert not missing, f"missing architecture markers: {sorted(missing)}"
 
 
@@ -171,27 +238,7 @@ def test_all_code_cells_parse_as_python():
 def test_notebook_does_not_import_project_architecture():
     forbidden = []
     for cell in _code_cells(load_notebook()):
-        for node in ast.walk(ast.parse(_parseable_source(cell))):
-            if isinstance(node, ast.Import):
-                forbidden.extend(
-                    alias.name
-                    for alias in node.names
-                    if alias.name.startswith("detr3d.models")
-                )
-            elif isinstance(node, ast.ImportFrom):
-                module = node.module or ""
-                if module.startswith("detr3d.models"):
-                    forbidden.append(module)
-                if (
-                    module == "detr3d"
-                    or module.startswith("detr3d.")
-                    or module in {"train", "eval"}
-                ):
-                    forbidden.extend(
-                        f"{module}.{alias.name}"
-                        for alias in node.names
-                        if alias.name == "build_model"
-                    )
+        forbidden.extend(_forbidden_imports(ast.parse(_parseable_source(cell))))
     assert not forbidden, f"forbidden architecture imports: {sorted(forbidden)}"
 
 
