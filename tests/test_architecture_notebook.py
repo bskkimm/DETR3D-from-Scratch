@@ -1,15 +1,26 @@
 import ast
 import json
 import math
+import os
+import subprocess
+import sys
 import tokenize
 from io import StringIO
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import pytest
+from PIL import Image
+from torchvision import models
+from torchvision.models import ResNet101_Weights
+from torchvision.ops import DeformConv2d
 
+from detr3d.data import NuScenesDetr3DDataset
+from detr3d.models.backbone import MultiViewImageBackbone as ProductionMultiViewImageBackbone
 from detr3d.models.transformer.cross_attention import (
     Detr3DCrossAttention as ProductionDetr3DCrossAttention,
 )
@@ -17,6 +28,7 @@ from detr3d.models.transformer.feature_sampling import (
     feature_sampling as production_feature_sampling,
 )
 from detr3d.models.detr3d import Detr3DModel as ProductionDetr3DModel
+from detr3d.models.grid_mask import GridMask as ProductionGridMask
 from detr3d.models.heads.detr3d_head import (
     Detr3DHead as ProductionDetr3DHead,
     MLP as ProductionMLP,
@@ -25,6 +37,7 @@ from detr3d.models.losses.loss_utils import (
     decode_bbox_predictions as production_decode_bbox_predictions,
     encode_bbox_targets as production_encode_bbox_targets,
 )
+from detr3d.models.neck import ImageFPN as ProductionImageFPN
 from detr3d.models.transformer.decoder import (
     Detr3DTransformer as ProductionDetr3DTransformer,
 )
@@ -104,6 +117,11 @@ TASK4_DEFINITIONS = {
     "build_notebook_model",
 }
 APPROVED_PRODUCTION_IMPORTS = {
+    ("detr3d.data", "NuScenesDetr3DDataset"),
+    ("detr3d.engine.diagnostics", "decode_predictions"),
+    ("detr3d.engine.evaluator", "decode_nuscenes_predictions"),
+    ("detr3d.engine.evaluator", "export_nuscenes_results"),
+    ("detr3d.engine.evaluator", "run_nuscenes_evaluation"),
     ("detr3d.models.losses", "Detr3DLoss"),
     ("detr3d.models.losses.matcher", "HungarianMatcher3D"),
 }
@@ -383,10 +401,15 @@ def _execute_multiview_attention_cells():
 
 def _execute_task4_definition_cells():
     namespace = {
+        "np": np,
         "math": math,
         "torch": torch,
         "nn": nn,
         "F": F,
+        "Image": Image,
+        "models": models,
+        "ResNet101_Weights": ResNet101_Weights,
+        "DeformConv2d": DeformConv2d,
         "Callable": Callable,
         "Dict": Dict,
         "Iterable": Iterable,
@@ -396,6 +419,7 @@ def _execute_task4_definition_cells():
     }
     wanted = MULTIVIEW_ATTENTION_DEFINITIONS | TASK4_DEFINITIONS | {
         "GridMask",
+        "ModulatedDeformConv2dPack",
         "MultiViewImageBackbone",
         "ImageFPN",
     }
@@ -483,17 +507,22 @@ def _forbidden_imports(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 imported_name = alias.name.rsplit(".", 1)[-1]
+                is_project_module = alias.name == "detr3d" or alias.name.startswith(
+                    "detr3d."
+                )
                 is_model_module = alias.name == "detr3d.models" or alias.name.startswith(
                     "detr3d.models."
                 )
                 if (
-                    is_model_module
+                    is_project_module
+                    or is_model_module
                     or imported_name in DEFINITIONS
                     or alias.asname in DEFINITIONS
                 ):
                     forbidden.append(alias.name)
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
+            is_project_module = module == "detr3d" or module.startswith("detr3d.")
             is_model_module = module == "detr3d.models" or module.startswith(
                 "detr3d.models."
             )
@@ -502,6 +531,7 @@ def _forbidden_imports(tree):
                 is_approved = (module, alias.name) in APPROVED_PRODUCTION_IMPORTS
                 if (
                     alias.name == "*"
+                    or (is_project_module and not is_approved)
                     or (is_model_module and not is_approved)
                     or alias.name in DEFINITIONS
                     or alias.asname in DEFINITIONS
@@ -517,6 +547,30 @@ def test_import_contract_allows_production_matching_and_loss_imports():
         "from detr3d.models.losses.matcher import HungarianMatcher3D as Matcher\n"
     )
     assert _forbidden_imports(tree) == []
+
+
+def test_import_contract_allows_only_approved_integration_imports():
+    tree = ast.parse(
+        "from detr3d.data import NuScenesDetr3DDataset\n"
+        "from detr3d.engine.diagnostics import decode_predictions\n"
+        "from detr3d.engine.evaluator import (\n"
+        "    decode_nuscenes_predictions, export_nuscenes_results, run_nuscenes_evaluation\n"
+        ")\n"
+    )
+    assert _forbidden_imports(tree) == []
+
+
+def test_import_contract_rejects_unapproved_production_infrastructure():
+    tree = ast.parse(
+        "import detr3d.data as data\n"
+        "from detr3d.data import unapproved_helper\n"
+        "from detr3d.engine.trainer import fit\n"
+    )
+    assert _forbidden_imports(tree) == [
+        "detr3d.data",
+        "detr3d.data.unapproved_helper",
+        "detr3d.engine.trainer.fit",
+    ]
 
 
 def test_import_contract_rejects_wildcard_imports_from_every_module():
@@ -970,6 +1024,116 @@ def test_all_code_cells_execute_sequentially():
     for index, cell in enumerate(_code_cells(load_notebook())):
         source = _parseable_source(cell)
         exec(compile(source, f"notebook-cell-{index}", "exec"), namespace)
+
+
+def test_all_code_cells_smoke_in_fresh_subprocess():
+    script = """
+import ast
+import json
+from pathlib import Path
+
+notebook = json.loads(Path('notebooks/detr3d_e2e_walkthrough.ipynb').read_text())
+namespace = {}
+for index, cell in enumerate(notebook['cells']):
+    if cell['cell_type'] != 'code':
+        continue
+    source = '\\n'.join(
+        line
+        for line in ''.join(cell['source']).splitlines()
+        if not line.lstrip().startswith(('%', '!'))
+    )
+    ast.parse(source)
+    exec(compile(source, f'notebook-cell-{index}', 'exec'), namespace)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=NOTEBOOK.parents[1],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "TASK5_SMOKE_COMPLETE" in result.stdout
+
+
+@pytest.mark.skipif(
+    os.environ.get("RUN_NOTEBOOK_CHECKPOINT_PARITY") != "1",
+    reason="set RUN_NOTEBOOK_CHECKPOINT_PARITY=1 for the CUDA checkpoint fixture",
+)
+def test_notebook_strict_checkpoint_parity_on_validation_sample_zero():
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required for exact checkpoint parity")
+    dataroot = Path(
+        os.environ.get("NUSCENES_DATAROOT", "/home/beomseokkim2/dataset/nuscenes")
+    )
+    checkpoint_path = Path(
+        os.environ.get(
+            "DETR3D_CHECKPOINT_PATH",
+            "/home/beomseokkim2/kim/detr3d/outputs/c6_full_v1/final_checkpoint.pt",
+        )
+    )
+    if not dataroot.is_dir():
+        pytest.skip(f"nuScenes dataroot is unavailable: {dataroot}")
+    if not checkpoint_path.is_file():
+        pytest.skip(f"checkpoint is unavailable: {checkpoint_path}")
+
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    args = checkpoint["args"]
+    expected_classes = tuple(NuScenesDetr3DDataset.CLASSES)
+    class_names = tuple(checkpoint.get("class_names", expected_classes))
+    assert len(class_names) == len(expected_classes)
+    assert set(class_names) == set(expected_classes)
+    state_dict = checkpoint["model_state_dict"]
+
+    notebook = _execute_task4_definition_cells()
+    notebook_model = notebook["build_notebook_model"](
+        num_queries=args["num_queries"],
+        backbone_name=args["backbone"],
+        pretrained_backbone=not args["disable_pretrained_backbone"],
+        official_image_backbone=args["official_image_backbone"],
+        use_grid_mask=args["grid_mask"],
+    )
+    production_model = ProductionDetr3DModel(
+        backbone=ProductionMultiViewImageBackbone(
+            variant=args["backbone"],
+            pretrained=not args["disable_pretrained_backbone"],
+            official_style=args["official_image_backbone"],
+        ),
+        neck=ProductionImageFPN(
+            relu_before_extra_convs=args["official_image_backbone"]
+        ),
+        transformer=ProductionDetr3DTransformer(num_queries=args["num_queries"]),
+        head=ProductionDetr3DHead(num_decoder_layers=6),
+        image_augmentation=ProductionGridMask() if args["grid_mask"] else None,
+    )
+    notebook_model.load_state_dict(state_dict, strict=True)
+    production_model.load_state_dict(state_dict, strict=True)
+    device = torch.device("cuda")
+    notebook_model.to(device=device, dtype=torch.float32).eval()
+    production_model.to(device=device, dtype=torch.float32).eval()
+
+    dataset = NuScenesDetr3DDataset(
+        dataroot=dataroot,
+        version=args["version"],
+        image_size=(args["image_height"], args["image_width"]),
+        max_samples=1,
+        split="val",
+        official_image_preprocessing=args["official_image_preprocessing"],
+        official_gt_semantics=args["official_gt_semantics"],
+    )
+    sample = dataset[0]
+    images = sample["images"].unsqueeze(0).to(device=device, dtype=torch.float32)
+    metadata = [{
+        "lidar2img": sample["img_metas"]["lidar2img"].to(device=device),
+        "image_shape": sample["img_metas"]["image_shape"].to(device=device),
+        "sample_token": sample["img_metas"]["sample_token"],
+    }]
+    with torch.inference_mode():
+        actual = notebook_model(images, metadata)
+        expected = production_model(images, metadata)
+    for key in ("cls_scores", "bbox_preds", "init_reference", "inter_references"):
+        torch.testing.assert_close(actual[key], expected[key], atol=1e-5, rtol=1e-5)
 
 
 def test_notebook_does_not_import_project_architecture():
