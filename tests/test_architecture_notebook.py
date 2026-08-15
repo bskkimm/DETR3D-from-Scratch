@@ -65,6 +65,36 @@ DIMENSION_OPERATIONS = (
     "F.grid_sample(",
 )
 
+TASK2_DIMENSION_ANNOTATIONS = (
+    ("GridMask canvas", "mask = np.ones(", "[1392,2400]"),
+    ("GridMask crop", "mask = mask[top :", "[1392,2400] -> [928,1600]"),
+    ("GridMask mask view", "mask_tensor = mask_tensor.view(", "[928,1600] -> [1,1,928,1600]"),
+    ("GridMask broadcast", "return images * mask_tensor  ", "[B*6,3,928,1600]"),
+    ("GridMask noise view", ").view(1, 1, height, width)  #", "[928,1600] -> [1,1,928,1600]"),
+    ("GridMask noise broadcast", "return images * mask_tensor + noise", "[B*6,3,928,1600]"),
+    ("DCNv1 offset convolution", "offset = self.offset_conv(x)", "[B*6,256,116,200] -> [B*6,18,58,100]"),
+    ("DCNv1 output convolution", "return self.deform_conv(x, offset)  ", "[B*6,256,116,200] -> [B*6,256,58,100]"),
+    ("DCNv2 offset-mask convolution", "offset_mask = self.conv_offset(x)", "[B*6,256,58,100] -> [B*6,27,58,100]"),
+    ("DCNv2 offset split", "offset = offset_mask[:, :", "[B*6,27,58,100] -> [B*6,18,58,100]"),
+    ("DCNv2 mask split", "mask = offset_mask[:, self.offset_channels :]", "[B*6,27,58,100] -> [B*6,9,58,100]"),
+    ("DCNv2 output convolution", "return self.deform_conv(x, offset, mask)", "[B*6,512,29,50]"),
+    ("backbone camera flatten", "flat = images.reshape(", "[B,6,3,928,1600] -> [B*6,3,928,1600]"),
+    ("backbone stem convolution and pooling", "x = self.stem(flat)", "[B*6,3,928,1600] -> [B*6,64,232,400]"),
+    ("backbone stage 2", "stage2 = self.stage2(x)", "[B*6,64,232,400] -> [B*6,256,232,400]"),
+    ("backbone stage 3", "stage3 = self.stage3(stage2)", "[B*6,256,232,400] -> [B*6,512,116,200]"),
+    ("backbone stage 4", "stage4 = self.stage4(stage3)", "[B*6,512,116,200] -> [B*6,1024,58,100]"),
+    ("backbone stage 5", "stage5 = self.stage5(stage4)", "[B*6,1024,58,100] -> [B*6,2048,29,50]"),
+    ("backbone camera restore", "multi_view[name] = feat.reshape(", "C3 [B*6,512,116,200] -> [B,6,512,116,200]"),
+    ("FPN camera flatten", "flat = feat.reshape(", "C5 [B,6,2048,29,50] -> [B*6,2048,29,50]"),
+    ("FPN lateral convolution", "lateral = conv(feat)", "C3 [B*6,512,116,200] -> [B*6,256,116,200]"),
+    ("FPN interpolation", "upsampled = F.interpolate(", "[B*6,256,29,50] -> [B*6,256,58,100]"),
+    ("FPN output convolution", "output = conv(feat)", "P5 [B*6,256,29,50] -> [B*6,256,29,50]"),
+    ("FPN P6 convolution", "outputs.append(self.extra_conv(extra_input))", "[B*6,256,29,50] -> [B*6,256,15,25]"),
+    ("FPN camera restore", "pyramid[out_name] = feat.reshape(", "P6 [B*6,256,15,25] -> [B,6,256,15,25]"),
+    ("smoke backbone", "smoke_features = smoke_backbone(smoke_images)", "C5 [B,6,2048,29,50]"),
+    ("smoke FPN", "smoke_pyramid = smoke_fpn(smoke_features)", "P6 [B,6,256,15,25]"),
+)
+
 # Static matching cannot reliably infer dimensions from arbitrary module names.
 MANUAL_REVIEW_ASSERTIONS = (
     "Convolution call sites changing channels or spatial size have shape comments.",
@@ -311,3 +341,19 @@ def test_explicit_dimension_operations_have_shape_comments():
     assert not missing_comments, "missing bracketed shape comments:\n" + "\n".join(
         missing_comments
     )
+
+
+def test_task2_dimension_changes_have_symbolic_and_faithful_shape_comments():
+    lines = code_text(load_notebook()).splitlines()
+    failures = []
+    for category, operation, faithful_shape in TASK2_DIMENSION_ANNOTATIONS:
+        matches = [line for line in lines if operation in line]
+        if len(matches) != 1:
+            failures.append(f"{category}: expected one `{operation}` line, found {len(matches)}")
+            continue
+        comment = matches[0].partition("#")[2]
+        required = ("symbolic", "faithful", "->", faithful_shape)
+        missing = [fragment for fragment in required if fragment not in comment]
+        if missing:
+            failures.append(f"{category}: missing {missing}: {matches[0]}")
+    assert not failures, "incomplete Task 2 shape annotations:\n" + "\n".join(failures)
