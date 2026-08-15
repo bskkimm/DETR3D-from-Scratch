@@ -65,6 +65,8 @@ MULTIVIEW_ATTENTION_MARKERS = {
 MULTIVIEW_ATTENTION_DEFINITIONS = {
     "inverse_sigmoid",
     "denormalize_reference_points",
+    "_stack_projection_matrices",
+    "_stack_image_shapes",
     "feature_sampling",
     "Detr3DCrossAttention",
 }
@@ -119,23 +121,49 @@ TASK2_DIMENSION_ANNOTATIONS = (
 )
 
 TASK3_DIMENSION_ANNOTATIONS = (
+    ("point-cloud minimum slice", "xyz_min = pc_range_tensor[:3]", "[6] -> [3]"),
+    ("point-cloud maximum slice", "xyz_max = pc_range_tensor[3:]", "[6] -> [3]"),
+    ("homogeneous one column", "ref_points_one = torch.ones_like(", "[B,900,3] -> [B,900,1]"),
     ("homogeneous coordinate append", "ref_points_homo = torch.cat(", "[B,900,3] -> [B,900,4]"),
     ("projection matrix batch stack", "return torch.stack(matrices, dim=0)", "[B,6,4,4]"),
-    ("single image shape camera expansion", "shape_tensor = shape_tensor.unsqueeze(0).repeat(", "[2] -> [6,2]"),
+    ("image shape camera-axis insertion", "shape_tensor = shape_tensor.unsqueeze(0)", "[2] -> [1,2]"),
+    ("image shape camera repetition", "shape_tensor = shape_tensor.repeat(", "[1,2] -> [6,2]"),
+    ("image height-width slice", "shapes.append(shape_tensor[:, :2])", "[6,S] -> [6,2]"),
     ("image shape batch stack", "return torch.stack(shapes, dim=0)", "[B,6,2]"),
-    ("projection camera expansion", "proj = proj.unsqueeze(1).repeat(", "[B,4,4] -> [B,6,4,4]"),
-    ("homogeneous point camera axis", "points = ref_points_homo[:, None, :, :, None]", "[B,900,4] -> [B,1,900,4,1]"),
-    ("projection multiply squeeze", "proj_points = torch.matmul(", "[B,6,900,4,1] -> [B,6,900,4]"),
+    ("projection camera-axis insertion", "proj = proj.unsqueeze(1)", "[B,4,4] -> [B,1,4,4]"),
+    ("projection camera repetition", "proj = proj.repeat(", "[B,1,4,4] -> [B,6,4,4]"),
+    ("point camera-axis insertion", "points = ref_points_homo.unsqueeze(1)", "[B,900,4] -> [B,1,900,4]"),
+    ("point vector-axis insertion", "points = points.unsqueeze(-1)", "[B,1,900,4] -> [B,1,900,4,1]"),
+    ("projection query-axis insertion", "camera_proj = proj.unsqueeze(2)", "[B,6,4,4] -> [B,6,1,4,4]"),
+    ("homogeneous projection multiply", "proj_points = torch.matmul(", "[B,6,1,4,4] @ [B,1,900,4,1] -> [B,6,900,4,1]"),
+    ("projected vector squeeze", "proj_points = proj_points.squeeze(-1)", "[B,6,900,4,1] -> [B,6,900,4]"),
+    ("projected depth slice", "depth = proj_points[..., 2:3]", "[B,6,900,4] -> [B,6,900,1]"),
+    ("projected xy slice", "xy = proj_points[..., :2]", "[B,6,900,4] -> [B,6,900,2]"),
+    ("image width slice", "width = image_shapes[..., 1:2]", "[B,6,2] -> [B,6,1]"),
+    ("image height slice", "height = image_shapes[..., 0:1]", "[B,6,2] -> [B,6,1]"),
+    ("pixel x-axis selection", "pixel_x = xy[..., 0]", "[B,6,900,2] -> [B,6,900]"),
+    ("pixel y-axis selection", "pixel_y = xy[..., 1]", "[B,6,900,2] -> [B,6,900]"),
     ("sampling grid stack", "grid = torch.stack(", "[B,6,900] + [B,6,900] -> [B,6,900,2]"),
+    ("depth-axis selection", "valid = depth[..., 0]", "[B,6,900,1] -> [B,6,900]"),
+    ("grid x-axis selection", "grid_x = grid[..., 0]", "[B,6,900,2] -> [B,6,900]"),
+    ("grid y-axis selection", "grid_y = grid[..., 1]", "[B,6,900,2] -> [B,6,900]"),
     ("feature camera flatten", "feat = level_feat.reshape(", "[B,6,256,H_l,W_l] -> [B*6,256,H_l,W_l]"),
     ("grid camera flatten", "level_grid = grid.reshape(", "[B,6,900,2] -> [B*6,900,1,2]"),
     ("bilinear sampling", "sampled = F.grid_sample(", "[B*6,256,H_l,W_l] -> [B*6,256,900,1]"),
-    ("sample axis restore", "sampled = sampled.reshape(", "[B*6,256,900,1] -> [B,256,900,6,1]"),
-    ("mask axis order", "level_mask = valid.permute(", "[B,6,900] -> [B,1,900,6,1]"),
+    ("sample camera restore", "sampled = sampled.reshape(", "[B*6,256,900,1] -> [B,6,256,900,1]"),
+    ("sample axis permutation", "sampled = sampled.permute(", "[B,6,256,900,1] -> [B,256,900,6,1]"),
+    ("mask axis permutation", "level_mask = valid.permute(", "[B,6,900] -> [B,900,6]"),
+    ("mask channel-axis insertion", "level_mask = level_mask.unsqueeze(1)", "[B,900,6] -> [B,1,900,6]"),
+    ("mask sample-axis insertion", "level_mask = level_mask.unsqueeze(4)", "[B,1,900,6] -> [B,1,900,6,1]"),
     ("feature level stack", "sampled_feats = torch.stack(", "[B,256,900,6,1] -> [B,256,900,6,1,4]"),
     ("mask level stack", "mask = torch.stack(", "[B,1,900,6,1] -> [B,1,900,6,1,4]"),
     ("attention camera-level view", "attention_weights = attention_weights.view(", "[B,900,24] -> [B,900,6,1,4]"),
-    ("attention axis alignment", "attention_weights = attention_weights.permute(", "[B,900,6,1,4] -> [B,1,900,6,1,4]"),
+    ("attention axis permutation", "attention_weights = attention_weights.permute(", "[B,900,6,1,4] -> [B,1,900,6,4]"),
+    ("attention sample-axis insertion", "attention_weights = attention_weights.unsqueeze(4)", "[B,1,900,6,4] -> [B,1,900,6,1,4]"),
+    ("attention feature broadcast", "weighted_feats = sampled_feats * attention_weights", "[B,1,900,6,1,4] -> [B,256,900,6,1,4]"),
+    ("attention level reduction", "fused_levels = weighted_feats.sum(dim=-1)", "[B,256,900,6,1,4] -> [B,256,900,6,1]"),
+    ("attention singleton reduction", "fused_cameras = fused_levels.sum(dim=-1)", "[B,256,900,6,1] -> [B,256,900,6]"),
+    ("attention camera reduction", "fused = fused_cameras.sum(dim=-1)", "[B,256,900,6] -> [B,256,900]"),
     ("fused decoder layout", "fused = fused.permute(", "[B,256,900] -> [B,900,256]"),
 )
 
@@ -244,10 +272,7 @@ def _execute_multiview_attention_cells():
         "Optional": Optional,
         "Tuple": Tuple,
     }
-    wanted = MULTIVIEW_ATTENTION_DEFINITIONS | {
-        "_stack_projection_matrices",
-        "_stack_image_shapes",
-    }
+    wanted = MULTIVIEW_ATTENTION_DEFINITIONS
     for cell in _code_cells(load_notebook()):
         source = _parseable_source(cell)
         tree = ast.parse(source)
