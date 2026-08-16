@@ -316,7 +316,6 @@ This guide now targets a more paper-oriented DETR3D package setup:
 - AdamW with backbone LR multiplier and cosine schedule
 
 One sample means one nuScenes timestamp with 6 camera images, not one RGB image.
-The notebook now imports the package modules directly, so these commands and the notebook should stay aligned.
 
 Important practical note:
 - the rebuilt defaults are much heavier than the old notebook scaffold
@@ -664,10 +663,84 @@ After these additions, the most useful next steps are:
    - more careful small-object supervision
 6. Only then scale to broader training.
 
-## Notebook Note
+## Standalone Architecture Notebook
 
-The notebook now imports the package backbone, neck, transformer, head, loss, and trainer instead of redefining them.
-That means:
-- if you change package code, the notebook follows it after rerunning the affected cells
-- the old notebook-only debug commands are no longer the authoritative reference
-- this guide is now the canonical run reference for both package and notebook behavior
+`notebooks/detr3d_e2e_walkthrough.ipynb` locally defines the complete DETR3D
+architecture: GridMask, the ResNet image path, FPN, geometric feature sampling,
+cross-attention, decoder, iterative reference refinement, detection head, and
+box codec. It does not import the production model or trainer as its
+implementation. Production imports are used only around that notebook-defined
+model for nuScenes data, matching/loss, diagnostics, and official evaluation.
+
+### Synthetic Smoke Execution
+
+The committed defaults use deterministic, reduced synthetic tensors and perform
+one actual optimization step. They do not require nuScenes or a checkpoint.
+The notebook-focused smoke test executes every code cell sequentially in a fresh
+subprocess without writing outputs back to the notebook:
+
+```bash
+conda run -n torch_env env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+  python -m pytest \
+  tests/test_architecture_notebook.py::test_all_code_cells_smoke_in_fresh_subprocess \
+  -q
+```
+
+A successful run verifies the `TASK5_SMOKE_COMPLETE` sentinel. When using
+the documented pytest path, no temporary notebook is written and the tracked
+file is unchanged. Every committed code cell retains `execution_count: null`
+and `outputs: []`.
+
+### Optional Data And Evaluation Modes
+
+The following command non-interactively sets `RUN_REAL_DATA=True`, the dataroot,
+version, and sample index, then executes the actual notebook real-data cell:
+
+```bash
+conda run -n torch_env env \
+  PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+  RUN_NOTEBOOK_REAL_DATA=1 \
+  NUSCENES_DATAROOT=/path/to/nuscenes \
+  NUSCENES_VERSION=v1.0-trainval \
+  NUSCENES_SAMPLE_INDEX=0 \
+  python -m pytest \
+  tests/test_architecture_notebook.py::test_notebook_real_data_path_on_configured_validation_sample \
+  -q
+```
+
+The fixture fails directly when explicitly enabled with a missing/invalid
+dataroot, version, or sample index. A successful run verifies
+`TASK5_REAL_DATA_COMPLETE` after forwarding the selected validation sample
+through the notebook-defined architecture.
+
+The notebook's guarded **Optional FCOS3D Image-Path Initialization** cell reads
+`FCOS3D_CHECKPOINT_PATH`. Set it to an existing FCOS3D checkpoint in a temporary
+interactive copy to build the notebook-defined official-style model and call
+the production `load_fcos3d_initialization` translation/validation helper. With
+the committed `None` default, the cell prints a skip message. An invalid
+configured path fails directly; the helper initializes the local architecture
+and does not replace it.
+
+Strict notebook-to-production checkpoint parity is guarded by an opt-in test
+because the production model factory is deliberately supplied outside the
+notebook. The fixture non-interactively sets `RUN_CHECKPOINT=True`, injects the
+factory and configured paths, and executes the actual notebook checkpoint cell.
+It uses CUDA, float32 evaluation, validation sample 0, strict state loading, and
+compares all four output tensors at `atol=rtol=1e-5`:
+
+```bash
+conda run -n torch_env env \
+  PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+  RUN_NOTEBOOK_CHECKPOINT_PARITY=1 \
+  NUSCENES_DATAROOT=/path/to/nuscenes \
+  DETR3D_CHECKPOINT_PATH=/path/to/final_checkpoint.pt \
+  python -m pytest \
+  tests/test_architecture_notebook.py::test_notebook_strict_checkpoint_parity_on_validation_sample_zero \
+  -q
+```
+
+Advanced full official evaluation also sets `RUN_CHECKPOINT=True` and
+`RUN_OFFICIAL_EVAL=True`, injects `PRODUCTION_MODEL_FACTORY`, and configures
+`CHECKPOINT_PATH`, `NUSCENES_DATAROOT`, `OFFICIAL_RESULTS_PATH`, and
+`OFFICIAL_EVAL_OUTPUT_DIR`. This path performs full validation export and
+nuScenes devkit evaluation; it is not part of synthetic smoke mode.
