@@ -14,7 +14,8 @@
     "CAM_BACK_RIGHT"
   ],
   "excluded_display_classes": [
-    "barrier"
+    "barrier",
+    "traffic_cone"
   ],
   "display_filter_scope": "visualization only; inference and evaluation unchanged",
   "layout": [
@@ -31,9 +32,10 @@
     360
   ],
   "playback": "4 FPS (~2x source speed; 5-second loop)",
+  "playback_fps": 4,
   "source_keyframe_rate_hz": 2,
   "camera_intermediate_frames_available": false,
-  "overlays": "predicted 3D cuboids and class/confidence labels only; no headings, timestamps, or footers",
+  "overlays": "predicted 3D cuboids only; no text overlays",
   "projection": "LiDAR-frame corners projected with per-camera calibration; no image stitching or warping",
   "decoder": "official NMS-free top-300, post-center range filtering",
   "styling": {
@@ -51,7 +53,7 @@
     },
     "box_line_width_px": 3,
     "box_dark_outline_px": 5.5,
-    "text": "bold white, 20 px, dark background, colored border"
+    "text": "none"
   },
   "sequences": [
     {
@@ -82,6 +84,7 @@
       ],
       "loop_duration_ms": 5000,
       "source_duration_ms": 9900.747,
+      "source_speed_multiplier": 1.9801,
       "end_exclusive_timestamp_us": 1533151743447675,
       "frames": [
         {
@@ -169,12 +172,12 @@
         "CAM_FRONT_LEFT": [
           4,
           3,
-          5,
           4,
-          5,
+          3,
+          3,
+          3,
+          3,
           4,
-          5,
-          5,
           3,
           3,
           3,
@@ -215,15 +218,15 @@
           7,
           8,
           7,
-          8,
-          11,
-          11,
-          9,
-          11,
-          8,
-          8,
           7,
-          6,
+          10,
+          10,
+          7,
+          8,
+          5,
+          3,
+          3,
+          3,
           3,
           2,
           4,
@@ -255,7 +258,28 @@
         0,
         0
       ],
-      "source_speed_multiplier": 1.9801
+      "hidden_traffic_cone_predictions_per_frame": [
+        2,
+        1,
+        1,
+        1,
+        3,
+        2,
+        3,
+        4,
+        5,
+        5,
+        7,
+        6,
+        4,
+        4,
+        4,
+        4,
+        4,
+        2,
+        1,
+        0
+      ]
     },
     {
       "scene": "scene-0096",
@@ -285,6 +309,7 @@
       ],
       "loop_duration_ms": 5000,
       "source_duration_ms": 10250.771,
+      "source_speed_multiplier": 2.0502,
       "end_exclusive_timestamp_us": 1533151282697850,
       "frames": [
         {
@@ -395,23 +420,23 @@
           7,
           7,
           9,
-          9,
-          6,
-          6,
           7,
           5,
-          6,
-          3,
-          3,
+          5,
           5,
           4,
-          8,
-          8,
-          8,
-          11,
-          12,
-          11,
-          13
+          3,
+          1,
+          1,
+          2,
+          2,
+          3,
+          3,
+          3,
+          3,
+          2,
+          2,
+          3
         ],
         "CAM_FRONT_RIGHT": [
           7,
@@ -425,15 +450,15 @@
           5,
           5,
           3,
-          2,
-          2,
+          1,
+          0,
           3,
           0,
-          1,
+          0,
           1,
           0,
-          2,
-          1
+          0,
+          0
         ]
       },
       "hidden_barrier_predictions_per_frame": [
@@ -458,8 +483,28 @@
         30,
         28
       ],
-      "source_speed_multiplier": 2.0502
+      "hidden_traffic_cone_predictions_per_frame": [
+        0,
+        0,
+        0,
+        2,
+        1,
+        1,
+        2,
+        1,
+        3,
+        2,
+        2,
+        3,
+        3,
+        6,
+        7,
+        7,
+        10,
+        11,
+        12,
+        12
+      ]
     }
-  ],
-  "playback_fps": 4
+  ]
 }

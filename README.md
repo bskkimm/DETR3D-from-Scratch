@@ -36,9 +36,9 @@ sampled at about 2 Hz. Inference uses all six cameras.
 
 ![Scene 0096: three forward cameras with projected DETR3D predictions](docs/media/predictions_scene_0096.gif)
 
-Bright wireframes with dark outlines show predicted 3D boxes; bold white labels
-show class and confidence. Barrier boxes and labels are hidden for clarity.
-The display threshold is **0.30**. These are
+Bright wireframes with dark outlines show predicted 3D boxes. Text labels,
+barrier boxes, and traffic-cone boxes are hidden. The display threshold is
+**0.30**. These are
 qualitative examples. Checkpoint checksum, sample tokens, camera order, and
 frame timing are recorded in [media metadata](docs/media/predictions.json).
 Camera imagery: nuScenes, © Motional; resized and annotated with predictions.
