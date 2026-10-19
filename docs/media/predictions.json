@@ -1,199 +1,414 @@
 {
   "dataset": "nuScenes v1.0-trainval",
   "split": "val",
-  "scene": "scene-0107",
   "checkpoint": "outputs/c6_full_v1/best_eval_checkpoint.pt",
   "checkpoint_sha256": "a71c87c4e132a460b9f416af4a9bfd9c0a7e70cdf1a22e95f8a4d20ebcd20792",
   "checkpoint_epoch": 18,
   "score_threshold": 0.3,
-  "decoder": "official NMS-free top-300, post-center range filtering",
-  "projection": "LiDAR-frame 3D box corners projected using each camera calibration",
-  "overlays": "predictions only; colors denote detection classes",
-  "image_size": [
-    768,
-    500
-  ],
-  "frames_per_gif": 20,
-  "playback": "10 FPS (~5x source speed; 2-second loop)",
-  "cameras": [
+  "inference_cameras": [
     "CAM_FRONT",
     "CAM_FRONT_LEFT",
     "CAM_FRONT_RIGHT",
-    "CAM_BACK"
+    "CAM_BACK",
+    "CAM_BACK_LEFT",
+    "CAM_BACK_RIGHT"
   ],
-  "frames": [
-    {
-      "sample_token": "ca7db2bbb0c0413e80a942a0e3ff3773",
-      "timestamp_us": 1533151733546928
-    },
-    {
-      "sample_token": "49f1b7a6ca754bcba3cebd40105d804d",
-      "timestamp_us": 1533151734046807
-    },
-    {
-      "sample_token": "6a1602032a0449e9a15300faafe36c47",
-      "timestamp_us": 1533151734447165
-    },
-    {
-      "sample_token": "9c9f22a58fdc45f2b8a119cda3554f1f",
-      "timestamp_us": 1533151734947016
-    },
-    {
-      "sample_token": "05e312eae68c454c86cea669ee26ced1",
-      "timestamp_us": 1533151735546411
-    },
-    {
-      "sample_token": "84c24cd1d7914f72bb2fa17a6c5c41e5",
-      "timestamp_us": 1533151736046290
-    },
-    {
-      "sample_token": "4ca5fbe7d222477da81019f6f1bbc004",
-      "timestamp_us": 1533151736546705
-    },
-    {
-      "sample_token": "e8bdfe0cd07e443983dd9574a28ff052",
-      "timestamp_us": 1533151737048671
-    },
-    {
-      "sample_token": "f06ba08d5dab4f7bb4523d369a769fc2",
-      "timestamp_us": 1533151737547579
-    },
-    {
-      "sample_token": "3212edb0603244e89934a93c5cbc1bd3",
-      "timestamp_us": 1533151738047457
-    },
-    {
-      "sample_token": "9fd3b3fb914d42c9a41ae1cfdb712c10",
-      "timestamp_us": 1533151738547319
-    },
-    {
-      "sample_token": "88c395f034714bac91e39650b6c8476b",
-      "timestamp_us": 1533151738947665
-    },
-    {
-      "sample_token": "ed4ab567cccb41848a4800223d46a71e",
-      "timestamp_us": 1533151739547646
-    },
-    {
-      "sample_token": "95be92f4ae2f41cbb460e84b2665ad9f",
-      "timestamp_us": 1533151740049981
-    },
-    {
-      "sample_token": "9578a444b9294e68bc29d1380abbff49",
-      "timestamp_us": 1533151740547970
-    },
-    {
-      "sample_token": "2000b45e38be453386b6b65c7f310810",
-      "timestamp_us": 1533151741047827
-    },
-    {
-      "sample_token": "2d4012e701194ca6a79709cfbfb6bb93",
-      "timestamp_us": 1533151741547700
-    },
-    {
-      "sample_token": "d2304980faca4c3eae8ec846962d9cac",
-      "timestamp_us": 1533151741947492
-    },
-    {
-      "sample_token": "3fa862e6d584466ab55bc7f9756294c4",
-      "timestamp_us": 1533151742448625
-    },
-    {
-      "sample_token": "0edf95e4da554301b3f8103eb85961ab",
-      "timestamp_us": 1533151742950548
-    }
+  "layout": [
+    "CAM_FRONT_LEFT",
+    "CAM_FRONT",
+    "CAM_FRONT_RIGHT"
   ],
-  "visible_boxes_per_frame": {
-    "CAM_FRONT": [
-      10,
-      8,
-      5,
-      6,
-      5,
-      5,
-      6,
-      5,
-      4,
-      4,
-      4,
-      6,
-      6,
-      7,
-      5,
-      9,
-      9,
-      7,
-      7,
-      6
-    ],
-    "CAM_FRONT_LEFT": [
-      8,
-      8,
-      9,
-      7,
-      7,
-      6,
-      6,
-      5,
-      3,
-      3,
-      3,
-      3,
-      2,
-      3,
-      4,
-      4,
-      5,
-      5,
-      6,
-      6
-    ],
-    "CAM_FRONT_RIGHT": [
-      10,
-      7,
-      8,
-      7,
-      8,
-      11,
-      11,
-      9,
-      12,
-      8,
-      8,
-      7,
-      6,
-      4,
-      3,
-      5,
-      0,
-      1,
-      2,
-      2
-    ],
-    "CAM_BACK": [
-      19,
-      15,
-      17,
-      18,
-      12,
-      13,
-      15,
-      9,
-      15,
-      11,
-      15,
-      11,
-      8,
-      10,
-      7,
-      8,
-      13,
-      9,
-      10,
-      7
-    ]
+  "panel_size": [
+    640,
+    360
+  ],
+  "image_size": [
+    1920,
+    360
+  ],
+  "playback": "real time; each frame delay follows source sample timestamps (10 ms GIF precision)",
+  "source_keyframe_rate_hz": 2,
+  "camera_intermediate_frames_available": false,
+  "overlays": "predicted 3D cuboids and class/confidence labels only; no headings, timestamps, or footers",
+  "projection": "LiDAR-frame corners projected with per-camera calibration; no image stitching or warping",
+  "decoder": "official NMS-free top-300, post-center range filtering",
+  "styling": {
+    "box_color_by_class": {
+      "car": "#00f0ff",
+      "truck": "#ffdf00",
+      "bus": "#ff4ff2",
+      "trailer": "#bd8dff",
+      "construction_vehicle": "#ffac31",
+      "pedestrian": "#59ff72",
+      "motorcycle": "#ff6baa",
+      "bicycle": "#ad85ff",
+      "traffic_cone": "#ff7600",
+      "barrier": "#ffff38"
+    },
+    "box_line_width_px": 3,
+    "box_dark_outline_px": 5.5,
+    "text": "bold white, 20 px, dark background, colored border"
   },
-  "playback_fps": 10,
-  "frame_duration_ms": 100,
-  "source_keyframe_rate_hz": 2
+  "sequences": [
+    {
+      "scene": "scene-0107",
+      "file": "predictions_scene_0107.gif",
+      "frames_per_gif": 20,
+      "frame_durations_ms": [
+        500,
+        400,
+        500,
+        600,
+        500,
+        500,
+        500,
+        500,
+        500,
+        500,
+        400,
+        600,
+        500,
+        500,
+        500,
+        500,
+        400,
+        500,
+        500,
+        500
+      ],
+      "loop_duration_ms": 9900,
+      "source_duration_ms": 9900.747,
+      "end_exclusive_timestamp_us": 1533151743447675,
+      "frames": [
+        {
+          "sample_token": "ca7db2bbb0c0413e80a942a0e3ff3773",
+          "timestamp_us": 1533151733546928
+        },
+        {
+          "sample_token": "49f1b7a6ca754bcba3cebd40105d804d",
+          "timestamp_us": 1533151734046807
+        },
+        {
+          "sample_token": "6a1602032a0449e9a15300faafe36c47",
+          "timestamp_us": 1533151734447165
+        },
+        {
+          "sample_token": "9c9f22a58fdc45f2b8a119cda3554f1f",
+          "timestamp_us": 1533151734947016
+        },
+        {
+          "sample_token": "05e312eae68c454c86cea669ee26ced1",
+          "timestamp_us": 1533151735546411
+        },
+        {
+          "sample_token": "84c24cd1d7914f72bb2fa17a6c5c41e5",
+          "timestamp_us": 1533151736046290
+        },
+        {
+          "sample_token": "4ca5fbe7d222477da81019f6f1bbc004",
+          "timestamp_us": 1533151736546705
+        },
+        {
+          "sample_token": "e8bdfe0cd07e443983dd9574a28ff052",
+          "timestamp_us": 1533151737048671
+        },
+        {
+          "sample_token": "f06ba08d5dab4f7bb4523d369a769fc2",
+          "timestamp_us": 1533151737547579
+        },
+        {
+          "sample_token": "3212edb0603244e89934a93c5cbc1bd3",
+          "timestamp_us": 1533151738047457
+        },
+        {
+          "sample_token": "9fd3b3fb914d42c9a41ae1cfdb712c10",
+          "timestamp_us": 1533151738547319
+        },
+        {
+          "sample_token": "88c395f034714bac91e39650b6c8476b",
+          "timestamp_us": 1533151738947665
+        },
+        {
+          "sample_token": "ed4ab567cccb41848a4800223d46a71e",
+          "timestamp_us": 1533151739547646
+        },
+        {
+          "sample_token": "95be92f4ae2f41cbb460e84b2665ad9f",
+          "timestamp_us": 1533151740049981
+        },
+        {
+          "sample_token": "9578a444b9294e68bc29d1380abbff49",
+          "timestamp_us": 1533151740547970
+        },
+        {
+          "sample_token": "2000b45e38be453386b6b65c7f310810",
+          "timestamp_us": 1533151741047827
+        },
+        {
+          "sample_token": "2d4012e701194ca6a79709cfbfb6bb93",
+          "timestamp_us": 1533151741547700
+        },
+        {
+          "sample_token": "d2304980faca4c3eae8ec846962d9cac",
+          "timestamp_us": 1533151741947492
+        },
+        {
+          "sample_token": "3fa862e6d584466ab55bc7f9756294c4",
+          "timestamp_us": 1533151742448625
+        },
+        {
+          "sample_token": "0edf95e4da554301b3f8103eb85961ab",
+          "timestamp_us": 1533151742950548
+        }
+      ],
+      "visible_boxes_per_frame": {
+        "CAM_FRONT_LEFT": [
+          8,
+          8,
+          9,
+          7,
+          7,
+          6,
+          6,
+          5,
+          3,
+          3,
+          3,
+          3,
+          2,
+          3,
+          4,
+          4,
+          5,
+          5,
+          6,
+          6
+        ],
+        "CAM_FRONT": [
+          10,
+          8,
+          5,
+          6,
+          5,
+          5,
+          6,
+          5,
+          4,
+          4,
+          4,
+          6,
+          6,
+          7,
+          5,
+          9,
+          9,
+          7,
+          7,
+          6
+        ],
+        "CAM_FRONT_RIGHT": [
+          10,
+          7,
+          8,
+          7,
+          8,
+          11,
+          11,
+          9,
+          12,
+          8,
+          8,
+          7,
+          6,
+          4,
+          3,
+          5,
+          0,
+          1,
+          2,
+          2
+        ]
+      }
+    },
+    {
+      "scene": "scene-0096",
+      "file": "predictions_scene_0096.gif",
+      "frames_per_gif": 20,
+      "frame_durations_ms": [
+        500,
+        500,
+        600,
+        500,
+        500,
+        500,
+        500,
+        600,
+        500,
+        500,
+        500,
+        500,
+        500,
+        550,
+        500,
+        500,
+        500,
+        500,
+        500,
+        500
+      ],
+      "loop_duration_ms": 10250,
+      "source_duration_ms": 10250.771,
+      "end_exclusive_timestamp_us": 1533151282697850,
+      "frames": [
+        {
+          "sample_token": "421215a3574d445db2bac0574bb34b67",
+          "timestamp_us": 1533151272447079
+        },
+        {
+          "sample_token": "3d905993341a42da8a4a951fb439682b",
+          "timestamp_us": 1533151272947509
+        },
+        {
+          "sample_token": "d66a316ffd914123b6324efc5b30c15b",
+          "timestamp_us": 1533151273447419
+        },
+        {
+          "sample_token": "fd27366f4f1c4df3ae73e27f8d469db1",
+          "timestamp_us": 1533151274047332
+        },
+        {
+          "sample_token": "3ba93f957fe54c8c891a2cd5992e65a9",
+          "timestamp_us": 1533151274547767
+        },
+        {
+          "sample_token": "d8ff67e7cda741f0ac2d7525dd26d208",
+          "timestamp_us": 1533151275047647
+        },
+        {
+          "sample_token": "4a4426ac48d54f9590573ea48b1e76fc",
+          "timestamp_us": 1533151275547534
+        },
+        {
+          "sample_token": "1f1982e0b2a64ec2b2aba3a41175ab6e",
+          "timestamp_us": 1533151276047417
+        },
+        {
+          "sample_token": "112aa7a7edfc4df6b8e9775b14f74e12",
+          "timestamp_us": 1533151276647932
+        },
+        {
+          "sample_token": "5edf36a058ce4849bc6371629bea8a69",
+          "timestamp_us": 1533151277147840
+        },
+        {
+          "sample_token": "b7d899dbb6264d7bada8daff326556ce",
+          "timestamp_us": 1533151277647671
+        },
+        {
+          "sample_token": "2b4441336efa4a649510d33c96ca53aa",
+          "timestamp_us": 1533151278148112
+        },
+        {
+          "sample_token": "1906aa07e1914059914e62ee02ccb50f",
+          "timestamp_us": 1533151278648011
+        },
+        {
+          "sample_token": "7c7ce7a97984492b9a5c76327bc90610",
+          "timestamp_us": 1533151279147860
+        },
+        {
+          "sample_token": "9a2209d8b19045f4a0d52af5d5c23a78",
+          "timestamp_us": 1533151279700559
+        },
+        {
+          "sample_token": "9be682790a634b91b334b633fa43010a",
+          "timestamp_us": 1533151280197931
+        },
+        {
+          "sample_token": "78b6b787491441fa864d6bd9382d5701",
+          "timestamp_us": 1533151280697790
+        },
+        {
+          "sample_token": "1175f341a78a4877bc5257cbc763aef5",
+          "timestamp_us": 1533151281198277
+        },
+        {
+          "sample_token": "296e524f77ca4fad9d95e3dfe54c1259",
+          "timestamp_us": 1533151281699224
+        },
+        {
+          "sample_token": "e8038e0f57c445f0a91111dd2c9052a3",
+          "timestamp_us": 1533151282197977
+        }
+      ],
+      "visible_boxes_per_frame": {
+        "CAM_FRONT_LEFT": [
+          3,
+          3,
+          6,
+          5,
+          6,
+          6,
+          8,
+          10,
+          7,
+          5,
+          6,
+          3,
+          5,
+          3,
+          2,
+          4,
+          2,
+          2,
+          2,
+          3
+        ],
+        "CAM_FRONT": [
+          7,
+          7,
+          9,
+          9,
+          6,
+          7,
+          9,
+          11,
+          11,
+          12,
+          9,
+          17,
+          17,
+          25,
+          23,
+          23,
+          24,
+          26,
+          27,
+          26
+        ],
+        "CAM_FRONT_RIGHT": [
+          7,
+          9,
+          10,
+          10,
+          7,
+          8,
+          9,
+          8,
+          5,
+          5,
+          3,
+          2,
+          3,
+          8,
+          7,
+          6,
+          5,
+          3,
+          6,
+          5
+        ]
+      }
+    }
+  ]
 }

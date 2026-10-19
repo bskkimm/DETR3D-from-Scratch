@@ -23,20 +23,23 @@ This is a single-seed result.
 
 ## Camera Predictions
 
-Four synchronized views from nuScenes validation **scene-0107**: 20 consecutive
-keyframes covering approximately 10 seconds, played at **10 FPS** (about 5×
-speed; 2 seconds per loop). Colored wireframes show predicted 3D boxes projected
-onto each camera; labels show class and confidence. The display threshold is
-**0.30**. Inference uses all six cameras.
+Two validation scenes, each with three synchronized views arranged **front-left
+→ front → front-right**. Each GIF plays 20 keyframes at their original timestamps:
+approximately **10 seconds at real-time speed**. The available images update
+about twice per second. Inference uses all six cameras.
 
-| Front | Front left |
-|:---:|:---:|
-| ![Front camera with projected DETR3D predictions](docs/media/predictions_cam_front.gif) | ![Front-left camera with projected DETR3D predictions](docs/media/predictions_cam_front_left.gif) |
-| **Front right** | **Rear** |
-| ![Front-right camera with projected DETR3D predictions](docs/media/predictions_cam_front_right.gif) | ![Rear camera with projected DETR3D predictions](docs/media/predictions_cam_back.gif) |
+**Scene 0107**
 
-These are qualitative examples from one scene. Checkpoint checksum, sample
-tokens, and rendering settings are recorded in [media metadata](docs/media/predictions.json).
+![Scene 0107: three forward cameras with projected DETR3D predictions](docs/media/predictions_scene_0107.gif)
+
+**Scene 0096**
+
+![Scene 0096: three forward cameras with projected DETR3D predictions](docs/media/predictions_scene_0096.gif)
+
+Bright wireframes with dark outlines show predicted 3D boxes; bold white labels
+show class and confidence. The display threshold is **0.30**. These are
+qualitative examples. Checkpoint checksum, sample tokens, camera order, and
+frame timing are recorded in [media metadata](docs/media/predictions.json).
 Camera imagery: nuScenes, © Motional; resized and annotated with predictions.
 The GIFs are shared under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 and the [nuScenes dataset terms](https://www.nuscenes.org/terms-of-use).
@@ -94,7 +97,7 @@ detr3d/
 ```
 
 Datasets, checkpoints, MLflow stores, logs, and training outputs are excluded
-from version control. The four README GIFs and their metadata live in `docs/media/`.
+from version control. The two README GIFs and their metadata live in `docs/media/`.
 
 ## Setup
 

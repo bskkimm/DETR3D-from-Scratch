@@ -8,7 +8,7 @@ repos:
       - id: check-json
       - id: check-added-large-files
         args: ["--maxkb=1024"]
-        exclude: '^docs/media/predictions_cam_(front|front_left|front_right|back)\.gif$'
+        exclude: '^docs/media/predictions_scene_(0107|0096)\.gif$'
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.11.0
     hooks:
