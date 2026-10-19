@@ -7,34 +7,27 @@ evaluation behavior using PyTorch and TorchVision components.
 
 ## Reproduction Result
 
-The faithful single-seed run used the official nuScenes train split and a
-24-epoch schedule. Both local results below were evaluated on all **6,019
-validation samples**. Scores use the 0–100 scale; mAP is mean average precision
-and NDS is the nuScenes detection score.
+The retained **epoch-18 checkpoint** was trained on the official nuScenes train
+split and evaluated on all **6,019 validation samples**. Scores use the 0–100
+scale; mAP is mean average precision and NDS is the nuScenes detection score.
 
 | Model | Checkpoint | mAP | NDS |
 |---|---|---:|---:|
 | Official DETR3D, ResNet-101 + DCN + GridMask | Upstream baseline | 34.70 | 42.20 |
-| Pure PyTorch, same variant | Epoch 24, historical result | **34.58** | **42.15** |
 | Pure PyTorch, same variant | **Epoch 18, retained weights** | **33.98** | **41.37** |
 
-The epoch-24 weights are no longer retained. The available
 `best_eval_checkpoint.pt` is epoch 18, selected by mean center distance on a
-fixed 512-sample diagnostic subset. Its full-validation scores are reported
-separately above. The GIFs below use these retained epoch-18 weights.
-
-The historical final result is within 0.12 mAP and 0.05 NDS points of the
-[official base model](https://github.com/WangYueFt/detr3d#evaluation-using-pretrained-models).
-This is a single-seed reproduction; it does not establish statistical
-equivalence across repeated runs. See the [training report](docs/analysis/c6-full-training.md)
-for the historical evaluation record.
+fixed 512-sample diagnostic subset. The GIFs below use this checkpoint.
+The comparison uses the [official base model](https://github.com/WangYueFt/detr3d#evaluation-using-pretrained-models).
+This is a single-seed result.
 
 ## Camera Predictions
 
 Four synchronized views from nuScenes validation **scene-0107**: 20 consecutive
-keyframes, approximately 10 seconds at native playback speed. Colored wireframes
-show predicted 3D boxes projected onto each camera; labels show class and
-confidence. The display threshold is **0.30**. Inference uses all six cameras.
+keyframes covering approximately 10 seconds, played at **10 FPS** (about 5×
+speed; 2 seconds per loop). Colored wireframes show predicted 3D boxes projected
+onto each camera; labels show class and confidence. The display threshold is
+**0.30**. Inference uses all six cameras.
 
 | Front | Front left |
 |:---:|:---:|
@@ -56,8 +49,7 @@ and the [nuScenes dataset terms](https://www.nuscenes.org/terms-of-use).
 | Model | ResNet-101 + modulated DCNv2 + FPN; 6 decoder layers; 900 queries |
 | Inputs | 6 cameras, 900 × 1600 each; official BGR preprocessing and padding |
 | Initialization / augmentation | FCOS3D backbone/FPN; GridMask and photometric distortion |
-| Schedule | 24 epochs; retained checkpoint at epoch 18; seed 0 |
-| Run duration | About 3 days 6 hours, including validation and recovery |
+| Checkpoint | Epoch 18; seed 0 |
 | Batch | 4 samples × 2 accumulation steps = effective batch 8 |
 | Optimizer | AdamW; LR `2e-4`, backbone LR `2e-5`, weight decay `0.01` |
 | LR schedule | Cosine; 500 warmup updates from 1/3 LR; minimum LR ratio `0.001` |
@@ -129,28 +121,9 @@ b6cd0590879adc21d2a54bebde44811391f006434a2ffcdc6b41480b2e95be48
 
 The [command guide](COMMAND_GUIDE.md) is the canonical reference. The exact
 C6 launch and recovery procedure is in the [training report](docs/analysis/c6-full-training.md).
-After preparing nuScenes and the FCOS3D initialization checkpoint, this command
-uses the same model, data, and optimization settings:
-
-```bash
-python train.py \
-  --dataroot /path/to/nuscenes --version v1.0-trainval \
-  --dataset-split train --val-split val \
-  --epochs 24 --batch-size 4 --accumulation-steps 2 \
-  --num-workers 4 --pin-memory --persistent-workers \
-  --image-height 900 --image-width 1600 --num-queries 900 \
-  --official-gt-semantics --official-image-backbone \
-  --official-image-preprocessing --disable-pretrained-backbone \
-  --init-fcos3d-checkpoint checkpoints/fcos3d.pth \
-  --grid-mask --photometric-distortion \
-  --lr 2e-4 --backbone-lr-mult 0.1 --weight-decay 0.01 \
-  --scheduler cosine --scheduler-total-epochs 24 \
-  --warmup-steps 500 --warmup-ratio 0.3333333333333333 \
-  --min-lr-ratio 0.001 --grad-clip-norm 35 \
-  --max-val-samples 512 --num-eval-samples 512 --eval-every 1 \
-  --num-eval-artifact-samples 4 --eval-max-boxes 100 \
-  --save-every 1 --seed 0 --output-dir outputs/c6_full_v1
-```
+For training from scratch, prepare nuScenes and the FCOS3D initialization
+checkpoint, then follow that launch command with its original learning-rate
+schedule. The retained weights were saved at epoch 18 of that run.
 
 ### Retained Weights
 

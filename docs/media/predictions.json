@@ -14,7 +14,7 @@
     500
   ],
   "frames_per_gif": 20,
-  "playback": "native keyframe timestamps (~2 Hz)",
+  "playback": "10 FPS (~5x source speed; 2-second loop)",
   "cameras": [
     "CAM_FRONT",
     "CAM_FRONT_LEFT",
@@ -192,5 +192,8 @@
       10,
       7
     ]
-  }
+  },
+  "playback_fps": 10,
+  "frame_duration_ms": 100,
+  "source_keyframe_rate_hz": 2
 }
