@@ -24,9 +24,9 @@ This is a single-seed result.
 ## Camera Predictions
 
 Two validation scenes, each with three synchronized views arranged **front-left
-→ front → front-right**. Each GIF plays 20 keyframes at their original timestamps:
-approximately **10 seconds at real-time speed**. The available images update
-about twice per second. Inference uses all six cameras.
+→ front → front-right**. Each GIF plays 20 keyframes at **4 FPS**, approximately
+**2× real-time speed**, with **5 seconds per loop**. The source images were
+sampled at about 2 Hz. Inference uses all six cameras.
 
 **Scene 0107**
 
