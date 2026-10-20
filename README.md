@@ -23,11 +23,6 @@ This is a single-seed result.
 
 ## Camera Predictions
 
-Two validation scenes, each with three synchronized views arranged **front-left
-→ front → front-right**. Each GIF plays 20 keyframes at **4 FPS**, approximately
-**2× real-time speed**, with **5 seconds per loop**. The source images were
-sampled at about 2 Hz. Inference uses all six cameras.
-
 **Scene 0107**
 
 ![Scene 0107: three forward cameras with projected DETR3D predictions](docs/media/predictions_scene_0107.gif)
@@ -36,11 +31,6 @@ sampled at about 2 Hz. Inference uses all six cameras.
 
 ![Scene 0096: three forward cameras with projected DETR3D predictions](docs/media/predictions_scene_0096.gif)
 
-Bright wireframes with dark outlines show predicted 3D boxes. Text labels,
-barrier boxes, and traffic-cone boxes are hidden. The display threshold is
-**0.30**. These are
-qualitative examples. Checkpoint checksum, sample tokens, camera order, and
-frame timing are recorded in [media metadata](docs/media/predictions.json).
 Camera imagery: nuScenes, © Motional; resized and annotated with predictions.
 The GIFs are shared under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 and the [nuScenes dataset terms](https://www.nuscenes.org/terms-of-use).
