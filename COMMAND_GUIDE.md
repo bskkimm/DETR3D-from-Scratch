@@ -1,21 +1,22 @@
 # DETR3D Command Guide
 
 The successful faithful full-training command is documented in
-`docs/analysis/c6-full-training.md`. That note is authoritative for the base
-C6 effective-batch-8 run, checkpoint recovery, periodic validation, and
-official final evaluation. The cancelled CBGS setup remains recorded in
-`docs/analysis/c6-cbgs-full-training.md`.
+`docs/analysis/c6-full-training.md`. That note is authoritative for the faithful
+ResNet-101 + DCNv2 + GridMask reproduction with effective batch 8, checkpoint
+recovery, periodic validation, and official final evaluation. The cancelled CBGS
+setup remains recorded in `docs/analysis/c6-cbgs-full-training.md`.
 
-This guide includes two tracks:
-- the accepted faithful C6 training/evaluation path on `main`
+This guide includes three tracks:
+
+- the accepted faithful DETR3D training/evaluation path on `main`
 - a lightweight deterministic one-sample implementation regression
 - older paper-oriented commands kept as secondary reference
 
 ## Current Canonical Baseline
 
-Use the seeded one-sample runner below as a fast implementation regression. It
-uses the historical lightweight setup and is not representative of faithful C6
-quality. Official nuScenes mAP/NDS remains the promotion metric.
+Use the seeded one-sample runner below as a fast implementation regression.
+This historical lightweight setup checks implementation behavior; official
+nuScenes mAP/NDS remains the promotion metric for the full reproduction.
 
 Canonical conditions:
 - baseline branch: `main`
