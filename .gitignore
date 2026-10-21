@@ -19,5 +19,6 @@ mlruns/
 .env
 .venv/
 .worktrees/
+/docs/superpowers/
 
 AGENTS.md
