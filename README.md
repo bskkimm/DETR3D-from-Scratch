@@ -114,7 +114,7 @@ b6cd0590879adc21d2a54bebde44811391f006434a2ffcdc6b41480b2e95be48
 ## Training And Evaluation
 
 The [command guide](COMMAND_GUIDE.md) is the canonical reference. The exact
-C6 launch and recovery procedure is in the [training report](docs/analysis/c6-full-training.md).
+launch and recovery procedure is in the [training report](docs/analysis/c6-full-training.md).
 For training from scratch, prepare nuScenes and the FCOS3D initialization
 checkpoint, then follow that launch command with its original learning-rate
 schedule. The retained weights were saved at epoch 18 of that run.

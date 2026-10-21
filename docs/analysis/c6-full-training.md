@@ -1,4 +1,8 @@
-# C6 Full Training
+# DETR3D Full Training: ResNet-101 + DCNv2 + GridMask
+
+This report records the full nuScenes training run for DETR3D with ResNet-101,
+deformable convolutions (DCNv2), and GridMask image augmentation. `C6` is an
+internal experiment label retained in the historical branch and output names.
 
 Status: Completed
 
@@ -18,9 +22,10 @@ Completed: 2026-07-21 05:07 JST
 
 ## Decision
 
-Train base C6 without CBGS. Use physical batch 4 and two accumulation steps on
-one RTX PRO 6000, giving effective batch 8 to match the paper's eight GPUs with
-one sample per GPU. Follow the later released 24-epoch cosine configuration.
+Train the ResNet-101 + DCNv2 + GridMask model without class-balanced group
+sampling (CBGS). Use physical batch 4 and two accumulation steps on one RTX PRO
+6000, giving effective batch 8 to match the paper's eight GPUs with one sample
+per GPU. Follow the later released 24-epoch cosine configuration.
 
 ## Fixed Setup
 
@@ -30,7 +35,8 @@ one sample per GPU. Follow the later released 24-epoch cosine configuration.
 - Final evaluation: all 6,019 official validation samples using nuScenes mAP/NDS.
 - FCOS3D checkpoint: `checkpoints/fcos3d.pth`.
 - FCOS3D SHA-256: `b6cd0590879adc21d2a54bebde44811391f006434a2ffcdc6b41480b2e95be48`.
-- Model: C6, no CBGS, no AMP.
+- Model: ResNet-101 + DCNv2 + GridMask; CBGS and automatic mixed precision (AMP)
+  disabled.
 
 ## Optimization
 
@@ -52,7 +58,7 @@ one sample per GPU. Follow the later released 24-epoch cosine configuration.
 | AMP | Disabled |
 | Seed | 0 |
 
-The C6 batch-4 FP32 benchmark sustained 3.07 samples/s with 91.44GB peak CUDA
+The batch-4 FP32 benchmark sustained 3.07 samples/s with 91.44GB peak CUDA
 reserved. Expected training duration is approximately 2.5-3 days plus periodic
 validation and thermal pauses.
 
@@ -158,7 +164,7 @@ epochs 15-24 and continues the original MLflow run.
 | Official DETR3D | ResNet-101 + DCN + GridMask + CBGS | val | 34.9 | 43.4 |
 | Official DETR3D | VoVNet + GridMask + CBGS, trained on trainval | test | 41.2 | 47.9 |
 | Pure PyTorch, earlier non-faithful run | ResNet-101, historical local configuration | val | 31.73 | 38.75 |
-| Pure PyTorch, faithful C6 run | ResNet-101 + DCN + GridMask | val | **34.58** | **42.15** |
+| Pure PyTorch, faithful reproduction | ResNet-101 + DCN + GridMask | val | **34.58** | **42.15** |
 
 The official VoVNet row uses a different backbone, CBGS, trainval training data,
 and test-set evaluation, so it is included for completeness but is not a direct
@@ -167,7 +173,7 @@ comparison with either local validation run.
 | Pure-PyTorch run | mATE | mASE | mAOE | mAVE | mAAE |
 |---|---:|---:|---:|---:|---:|
 | Earlier non-faithful | 0.7913 | 0.2796 | 0.4094 | 0.9969 | 0.2344 |
-| Faithful C6 | **0.7687** | **0.2711** | **0.4007** | **0.8664** | **0.2070** |
+| Faithful ResNet-101 reproduction | **0.7687** | **0.2711** | **0.4007** | **0.8664** | **0.2070** |
 
 The epoch-24 final checkpoint reproduces the upstream base result within 0.12
 mAP points and 0.05 NDS points. It improves over the earlier non-faithful run by
